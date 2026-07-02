@@ -65,9 +65,13 @@ def make_fixture(base_dir: str, runs: List[str] = ("run1", "run2")) -> str:
         PickableObject(name=name, is_particle=is_particle, label=label)
         for name, (is_particle, label) in OBJECTS.items()
     ]
+    # ``new_config`` prepends the ``local://`` protocol itself; pass a bare absolute path so the
+    # stored ``overlay_root`` is a single, CWD-independent URL. (Pre-prefixing here yields a doubled
+    # ``local://local://…`` that fsspec resolves relative to the process CWD -- which silently
+    # fragments the store across the per-task working directories the nextflow backend runs in.)
     root = copick.new_config(
         config=config_path,
-        overlay_root="local://" + overlay_root,
+        overlay_root=overlay_root,
         proj_name="copick-dag test",
         pickable_objects=pickable,
     )
@@ -125,7 +129,8 @@ def make_m3a_fixture(base_dir: str) -> str:
     config_path = os.path.join(base_dir, "config.json")
 
     pickable = [PickableObject(name=n, is_particle=p, label=l) for n, (p, l) in M3A_OBJECTS.items()]
-    root = copick.new_config(config=config_path, overlay_root="local://" + overlay_root,
+    # bare absolute path: new_config adds a single ``local://`` (see make_fixture note above).
+    root = copick.new_config(config=config_path, overlay_root=overlay_root,
                              proj_name="copick-dag m3a test", pickable_objects=pickable)
 
     sample = np.zeros(SHAPE, dtype=np.uint8)
