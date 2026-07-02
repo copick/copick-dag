@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# copick-graph scratch / fixtures generated at test time
+tests/_scratch/
+*.zarr/tmp/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# stray fsspec local:// scratch
+local:/

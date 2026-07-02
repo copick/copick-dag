@@ -1,0 +1,88 @@
+# M3a: the per-run finalization chain (A-H) of example_3 -- dynamic frontier without the
+# cross-run seg-stats barrier (that is M3b). Uses a single sweep row so `sample_user`/`csv`/`runs`
+# are bound; the test patches `csv`, `runs`, and the project config at load time.
+version: 1
+project:
+  config: ${CONFIG}
+sweep:
+  over:
+    - tag: L1
+      vs: 10.0
+      runs: ${RUNS}
+      sample_user: rescale
+      csv: ${CSV}
+
+nodes:
+  # A: split the pipeline multilabel into per-label binaries (data-dependent fan-out)
+  - id: split_pipeline
+    op: process.split
+    params: {output_user_id: split}
+    in: {i: "multilabel:pipeline/final"}
+    out: {o: "*:split/final"}
+
+  # B: filter-components, one node per CSV row, with per-name output routing
+  - id: filt
+    op: process.filter-components
+    expand: {from_csv: "${csv}", bind: {name: 1, min_vox: 2}}
+    params: {min_size: "${min_vox}", size_unit: voxel}
+    in: {i: "${name}:split/final"}
+    out:
+      o:
+        switch:
+          cytoplasm: "cytoplasm:filtcyto/final"
+          membrane: "membrane:prefilt/final"
+          default: "${name}:filt/final"
+
+  # B2: clip membrane away from microtubules -- only for runs that HAVE microtubules (optional).
+  - id: clip_mt
+    op: logical.clipseg
+    optional: true
+    params: {max_distance: "=9*${vs}", invert: true}
+    in: {i: "membrane:prefilt/final", rs: "microtubules:filt/final"}
+    out: {o: "membrane:memclip/final"}
+
+  # B3: thickness-filter the membrane, reading memclip if present else prefilt (coalesce)
+  - id: thick_mem
+    op: process.thickness-filter
+    params: {min_thickness: 2, thickness_unit: voxel}
+    in: {i: {coalesce: ["membrane:memclip/final", "membrane:prefilt/final"]}}
+    out: {o: "membrane:filt/final"}
+
+  # C: recombine non-cytoplasm filtered segs into a multilabel
+  - id: recomb1
+    op: process.combine
+    in: {i: "*:filt/final"}
+    out: {o: "multilabel:recomb1/final"}
+
+  # D: expand labels
+  - id: expand
+    op: process.expand-labels
+    params: {distance: 5, max_hole_size: 100000, size_unit: voxel}
+    in: {i: "multilabel:recomb1/final"}
+    out: {o: "multilabel:expand/final"}
+
+  # E: cytoplasm = sample - expand
+  - id: cyto_exp
+    op: logical.segop
+    params: {operation: difference}
+    in: {i: ["sample:${sample_user}/0", "multilabel:expand/final"]}
+    out: {o: "cytoplasm:expsplit/final"}
+
+  # F: split the expanded multilabel (data-dependent fan-out)
+  - id: split_expand
+    op: process.split
+    params: {output_user_id: expsplit}
+    in: {i: "multilabel:expand/final"}
+    out: {o: "*:expsplit/final"}
+
+  # G: combine all expsplit segs (incl. cytoplasm from E) -> final2
+  - id: final2
+    op: process.combine
+    in: {i: "*:expsplit/final"}
+    out: {o: "multilabel:final2/final"}
+
+  # H: the no-cytoplasm variant is just a copy of the expanded multilabel
+  - id: final2nocyto
+    op: core.cp
+    in: {src: "multilabel:expand/final"}
+    out: {dst: "multilabel:final2nocyto/final"}

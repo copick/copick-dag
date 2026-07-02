@@ -1,0 +1,108 @@
+# copick-graph translation of example_3.sh -- the full two-list finalization pipeline.
+#
+# Demonstrates the M3 dynamic frontier:
+#   - a two-list `sweep` matrix (L1 @10.006 / L2 @10.012, different run-sets, sample source, CSV);
+#   - CSV-driven `expand` of filter-components with per-name output `switch` routing;
+#   - a data-dependent `process.split` (fan-out) and `*`-glob `process.combine` (fan-in);
+#   - microtubules content-routing via an optional clipseg + a `coalesce` input (lowered to ordered
+#     optional-overwrite writers);
+#   - a `=`-expression param (`max_distance: "=9*${vs}"`);
+#   - a cross-run `process.seg-stats` BARRIER (one CSV/PDF per variant, over the row's run-set).
+#
+# Substitute the ${...} placeholders (config, run lists, CSV paths, stats dir) for your project.
+version: 1
+project:
+  config: ${CONFIG_PATH}
+
+sweep:
+  over:
+    - {tag: L1, vs: 10.006, runs: ${LIST1_RUNS}, sample_user: rescale,  csv: ${CSV_L1}, stats_tag: "10006"}
+    - {tag: L2, vs: 10.012, runs: ${LIST2_RUNS}, sample_user: mesh2seg, csv: ${CSV_L2}, stats_tag: "10012"}
+
+nodes:
+  # A: split original multilabel into per-label binaries
+  - id: split_pipeline
+    op: process.split
+    params: {output_user_id: split}
+    in: {i: "multilabel:pipeline/final"}
+    out: {o: "*:split/final"}
+
+  # B: filter-components per CSV row, routing cytoplasm/membrane to distinct users
+  - id: filt
+    op: process.filter-components
+    expand: {from_csv: "${csv}", bind: {name: 1, min_vox: 2}, normalize: {roug-er: rough-er}}
+    params: {min_size: "${min_vox}", size_unit: voxel}
+    in: {i: "${name}:split/final"}
+    out:
+      o:
+        switch:
+          cytoplasm: "cytoplasm:filtcyto/final"
+          membrane: "membrane:prefilt/final"
+          default: "${name}:filt/final"
+
+  # B2: clip membrane away from microtubules -- only runs that HAVE microtubules (optional/fail-closed)
+  - id: clip_mt
+    op: logical.clipseg
+    optional: true
+    params: {max_distance: "=9*${vs}", invert: true}
+    in: {i: "membrane:prefilt/final", rs: "microtubules:filt/final"}
+    out: {o: "membrane:memclip/final"}
+
+  # B3: thickness-filter membrane, reading memclip if present else prefilt
+  - id: thick_mem
+    op: process.thickness-filter
+    params: {min_thickness: 2, thickness_unit: voxel}
+    in: {i: {coalesce: ["membrane:memclip/final", "membrane:prefilt/final"]}}
+    out: {o: "membrane:filt/final"}
+
+  # C: combine non-cytoplasm filtered segs
+  - id: recomb1
+    op: process.combine
+    in: {i: "*:filt/final"}
+    out: {o: "multilabel:recomb1/final"}
+
+  # D: expand labels
+  - id: expand
+    op: process.expand-labels
+    params: {distance: 5, max_hole_size: 100000, size_unit: voxel}
+    in: {i: "multilabel:recomb1/final"}
+    out: {o: "multilabel:expand/final"}
+
+  # E: cytoplasm regenerated as sample - expand (sample source user differs per list)
+  - id: cyto_exp
+    op: logical.segop
+    params: {operation: difference}
+    in: {i: ["sample:${sample_user}/0", "multilabel:expand/final"]}
+    out: {o: "cytoplasm:expsplit/final"}
+
+  # F: split expanded multilabel
+  - id: split_expand
+    op: process.split
+    params: {output_user_id: expsplit}
+    in: {i: "multilabel:expand/final"}
+    out: {o: "*:expsplit/final"}
+
+  # G: combine all expsplit segs (with cytoplasm) -> final2
+  - id: final2
+    op: process.combine
+    in: {i: "*:expsplit/final"}
+    out: {o: "multilabel:final2/final"}
+
+  # H: no-cytoplasm variant = copy of expand
+  - id: final2nocyto
+    op: core.cp
+    in: {src: "multilabel:expand/final"}
+    out: {dst: "multilabel:final2nocyto/final"}
+
+  # I: seg-stats BARRIER -- one CSV + one PDF per variant, aggregating over the row's runs
+  - id: stats
+    op: process.seg-stats
+    over:
+      - {variant: final2,       fmt: csv,  ext: csv, tag: f2csv}
+      - {variant: final2,       fmt: plot, ext: pdf, tag: f2pdf}
+      - {variant: final2nocyto, fmt: csv,  ext: csv, tag: nccsv}
+      - {variant: final2nocyto, fmt: plot, ext: pdf, tag: ncpdf}
+    params:
+      output_format: "${fmt}"
+      output_path: "${STATS_DIR}/finalize_stats_${variant}_${stats_tag}.${ext}"
+    in: {i: "multilabel:${variant}/final"}

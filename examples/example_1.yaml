@@ -1,0 +1,88 @@
+# copick-graph translation of example_1.sh
+# Segmentation processing pipeline: combine membranes, clip to cell surface, remove enclosed
+# fragments, derive intermembrane-space, clean cytosole/intermembrane/flagellum of membrane
+# overlap, then move results to a `final-training` session and garbage-collect the temp objects.
+#
+# Voxel spacing is expressed as a single-valued sweep axis (defaults.voxel_spacing) rather than a
+# literal `@20.0` on every URI: segop/enclosed receive it as `-vs`, clipseg/cp/mv/rm get it
+# attached to their URIs. Swap `defaults.voxel_spacing` for `voxel_spacings: [..]` or
+# `voxel_spacings: {discover: true, match: 20.0, tol: 0.1}` to run at several spacings.
+version: 1
+project:
+  config: ${CONFIG_PATH}
+defaults:
+  voxel_spacing: 20.0
+
+nodes:
+  # Step 1: combine all membrane segmentations from the data portal (per-run fan-in over users)
+  - op: logical.segop
+    params: {operation: union}
+    in: {i: ["membrane:data-portal/*"]}
+    out: {o: "membrane:temp/combined-membranes"}
+
+  # Step 2: limit membrane to 200 A from the cell surface
+  - op: logical.clipseg
+    params: {max_distance: 200.0}
+    in: {i: "membrane:temp/combined-membranes", rs: "cell:napari/manual-scaled"}
+    out: {o: "membrane:temp/membrane-clipped"}
+
+  # Step 3: intermembrane-space = cell - cytosole (independent branch)
+  - op: logical.segop
+    params: {operation: difference}
+    in: {i: ["cell:napari/manual-scaled", "cytosole:napari/manual-scaled"]}
+    out: {o: "intermembrane-space:temp/intermembrane"}
+
+  # Step 4: remove membrane pieces fully enclosed by cytosole
+  - op: logical.enclosed
+    params: {margin: 2}
+    in: {i1: "membrane:temp/membrane-clipped", i2: "cytosole:napari/manual-scaled"}
+    out: {o: "membrane:temp/membrane-cleaned"}
+
+  # Step 5a: copy cytosole to temp (fallback if the inclusion subtraction below is a no-op)
+  - id: cyto_copy
+    op: core.cp
+    in: {src: "cytosole:napari/manual-scaled"}
+    out: {dst: "cytosole:temp/cytosole-no-inclusion"}
+
+  # Step 5b: subtract inclusion from cytosole IF it exists (overwrites the copy)
+  - id: cyto_sub_incl
+    op: logical.segop
+    params: {operation: difference}
+    optional: true
+    after: [cyto_copy]
+    in: {i: ["cytosole:napari/manual-scaled", "inclusion:napari/manual-scaled"]}
+    out: {o: "cytosole:temp/cytosole-no-inclusion"}
+
+  # Step 6a: remove membrane overlap from cytosole
+  - op: logical.segop
+    params: {operation: difference}
+    in: {i: ["cytosole:temp/cytosole-no-inclusion", "membrane:temp/membrane-cleaned"]}
+    out: {o: "cytosole:temp/cytosole-no-membrane"}
+
+  # Step 6b: remove membrane overlap from intermembrane-space
+  - op: logical.segop
+    params: {operation: difference}
+    in: {i: ["intermembrane-space:temp/intermembrane", "membrane:temp/membrane-cleaned"]}
+    out: {o: "intermembrane-space:temp/intermembrane-no-membrane"}
+
+  # Step 6c: remove membrane overlap from flagellum
+  - op: logical.segop
+    params: {operation: difference}
+    in: {i: ["flagellum:napari/manual-scaled", "membrane:temp/membrane-cleaned"]}
+    out: {o: "flagellum:temp/flagellum-no-membrane"}
+
+finalize:
+  moves:
+    - {from: "membrane:temp/membrane-cleaned", to: "membrane:napari/final-training", overwrite: true}
+    - {from: "cytosole:temp/cytosole-no-membrane", to: "cytosole:napari/final-training", overwrite: true}
+    - {from: "intermembrane-space:temp/intermembrane-no-membrane", to: "intermembrane-space:napari/final-training", overwrite: true}
+    - {from: "flagellum:temp/flagellum-no-membrane", to: "flagellum:napari/final-training", overwrite: true}
+  copies:
+    - {from: "cell:napari/manual-scaled", to: "cell:napari/final-training", overwrite: true}
+    - {from: "inclusion:napari/manual-scaled", to: "inclusion:napari/final-training", overwrite: true, optional: true}
+  gc:
+    remove:
+      - "membrane:temp/*"
+      - "cytosole:temp/*"
+      - "intermembrane-space:temp/*"
+      - "flagellum:temp/*"

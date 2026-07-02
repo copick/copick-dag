@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "copick-dag"
+description = "Abstract DAG-pipeline IR for copick, materializable to bash / in-memory / out-of-core backends."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["copick", "cryoet", "cryo-et", "tomography", "pipeline", "dag", "workflow"]
+authors = [{ name = "Utz Ermel", email = "utz.ermel@czii.org" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+dynamic = ["version"]
+dependencies = [
+    "copick>=1.23.1",
+    "copick-utils>=1.7.0",
+    "pydantic>=2",
+    "pyyaml>=6",
+    "networkx>=3",
+    "rich>=13",
+    "click>=8.1",
+]
+
+[project.optional-dependencies]
+dask = ["dask>=2024.1.0"]
+test = ["pytest>=8", "pytest-cov"]
+dev = ["pytest>=8", "pytest-cov", "ruff", "pre-commit"]
+
+[project.scripts]
+copick-dag = "copick_dag.cli:main"
+
+[project.urls]
+Repository = "https://github.com/copick/copick-dag"
+Issues = "https://github.com/copick/copick-dag/issues"
+
+[tool.hatch.version]
+path = "src/copick_dag/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/copick_dag"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: end-to-end tests that shell out to the copick CLI"]
