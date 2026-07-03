@@ -16,7 +16,7 @@ import pytest
 from copick_dag.backends.bash import render_bash
 from copick_dag.backends.bash.emitter import task_argv
 from copick_dag.backends.memory import run_memory
-from copick_dag.backends.nextflow import render_nextflow, render_nextflow_config
+from copick_dag.backends.nextflow import render_nextflow, render_nextflow_config, render_subworkflow
 from copick_dag.backends.nextflow.emitter import _name_map
 from copick_dag.ir.model import GraphNode, GraphSpec
 from copick_dag.planner import ProjectView, plan
@@ -76,6 +76,44 @@ def test_optional_has_or_true_and_always_emits_token(tmp_path):
         assert _cmd(t, rp.config) + " || true" in nf
     for t in nonopt:  # non-optional -> no || true
         assert _cmd(t, rp.config) + " || true" not in nf
+
+
+def test_render_subworkflow_composable(tmp_path):
+    """render_subworkflow emits a named take/main/emit workflow a host pipeline can include+call."""
+    rp = _plan(tmp_path)
+    wf = render_subworkflow(rp, "COPICK_DAG_CLEANUP", label="copick_cpu")
+
+    # A named, composable sub-workflow -- NOT a standalone top-level `workflow {}`.
+    assert "workflow COPICK_DAG_CLEANUP {" in wf
+    assert "  take:\n    gate" in wf
+    assert "  main:" in wf
+    assert "  emit:\n    done = " in wf
+    assert "Channel.value('start')" not in wf  # roots gate on the take input, not a local start
+
+    # Per-process label (host config maps it to a container/resources) + per-DAG name prefix.
+    assert "label 'copick_cpu'" in wf
+    assert wf.count("process COPICK_DAG_CLEANUP_p_") == len(rp.tasks)  # one process per task
+
+    # Same commands as the standalone/bash backends (command-equivalence preserved).
+    for t in rp.tasks:
+        assert _cmd(t, rp.config) in wf
+
+    # Root tasks (no deps) gate on the `gate` take-input; non-roots on their dep channels.
+    names = _name_map(rp.topo_order())
+    roots = [t for t in rp.tasks if not t.deps]
+    assert roots
+    for t in roots:
+        assert _wf_line(wf, f"c_{names[t.task_id]}").endswith("(gate).first()")
+
+
+def test_render_subworkflow_unique_prefix_across_dags(tmp_path):
+    """Two DAGs rendered into one module get disjoint process names (no collisions)."""
+    rp = _plan(tmp_path)
+    a = render_subworkflow(rp, "COPICK_DAG_A", label="copick_cpu")
+    b = render_subworkflow(rp, "COPICK_DAG_B", label="copick_cpu")
+    procs = lambda s: {ln.split()[1] for ln in s.splitlines() if ln.startswith("process ")}
+    assert procs(a).isdisjoint(procs(b))
+    assert "workflow COPICK_DAG_A {" in a and "workflow COPICK_DAG_B {" in b
 
 
 def test_dependency_wiring(tmp_path):
