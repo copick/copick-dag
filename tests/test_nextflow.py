@@ -20,7 +20,15 @@ from copick_dag.backends.nextflow import render_nextflow, render_nextflow_config
 from copick_dag.backends.nextflow.emitter import _name_map
 from copick_dag.ir.model import GraphNode, GraphSpec
 from copick_dag.planner import ProjectView, plan
-from fixtures import M3A_RUNS, M3A_VS, make_m3a_csv, make_m3a_fixture, read_segmentations
+from fixtures import (
+    M3A_RUNS,
+    M3A_VS,
+    make_crosstype_fixture,
+    make_m3a_csv,
+    make_m3a_fixture,
+    read_meshes,
+    read_segmentations,
+)
 
 GRAPH = os.path.join(os.path.dirname(__file__), "data", "example_3_perrun.yaml")
 
@@ -360,3 +368,38 @@ def test_nextflow_slurm_profile():
     assert r.returncode == 0, r.stdout[-2000:] + "\n" + r.stderr[-3000:]
 
     _assert_finals_equal(cfg_bash, cfg_nf)
+
+
+@pytest.mark.slow
+@requires_nextflow
+def test_nextflow_crosstype_roundtrip(tmp_path):
+    """M6: a real cross-type nextflow run. ``seg2mesh -> mesh2seg`` produces a real mesh then a real
+    segmentation back; assert both objects exist and the round-trip overlaps the seed. Proves the DSL2
+    emission works for cross-type ops (mesh output, tomogram grid reference) on top of the bash-proven
+    ``task_argv``."""
+    cfg = make_crosstype_fixture(str(tmp_path / "nf"), ["run1"])
+    graph = {
+        "version": 1,
+        "project": {"config": cfg},
+        "defaults": {"voxel_spacing": 20.0},
+        "nodes": [
+            {"id": "to_mesh", "op": "convert.seg2mesh", "params": {"level": 0.5, "step_size": 1},
+             "in": {"i": "cell:napari/manual-scaled"}, "out": {"o": "cell:seg2mesh/surf"}},
+            {"id": "to_seg", "op": "convert.mesh2seg", "params": {"tomo_type": "wbp"},
+             "in": {"i": "cell:seg2mesh/surf"}, "out": {"o": "cell:mesh2seg/vol@20.0"}},
+        ],
+    }
+    rp = plan(GraphSpec.from_dict(graph), ProjectView.open(cfg))
+    nfdir = str(tmp_path / "nfwork")
+    _emit_nf(rp, nfdir)
+    r = _run_nf(nfdir)
+    assert r.returncode == 0, r.stdout[-2000:] + "\n" + r.stderr[-3000:]
+
+    assert "run1|cell" in read_meshes(cfg, ["run1"], "seg2mesh", "surf")
+    rt = read_segmentations(cfg, ["run1"], "mesh2seg", "vol", 20.0)
+    orig = read_segmentations(cfg, ["run1"], "napari", "manual-scaled", 20.0)
+    assert "run1|cell" in rt
+    a = rt["run1|cell"].astype(bool)
+    b = orig["run1|cell"].astype(bool)
+    iou = (a & b).sum() / max(1, (a | b).sum())
+    assert iou > 0.3, f"round-trip IoU too low: {iou}"

@@ -59,6 +59,10 @@ def lint_op(op: OpSpec) -> List[str]:
     issues: List[str] = []
     cmd = resolve_command(op.cli_path)
     if cmd is None:
+        if op.plugin is not None:
+            # A plugin-provided op (e.g. copick_torch) whose command is not installed in this env:
+            # tolerated, so copick-dag stays lint-clean on a lean install without that plugin.
+            return []
         return [f"{op.op_id}: CLI path {op.cli_path} does not resolve to an installed command"]
 
     flags = command_flags(cmd)

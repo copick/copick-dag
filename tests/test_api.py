@@ -20,9 +20,11 @@ def _graph_str(csv, config="/abs/config.json", sort_keys=False):
 
 
 def test_describe_ops_and_op(tmp_path):
+    from copick_dag.registry import all_ops
+
     ops = api.describe_ops()
-    assert len(ops["ops"]) == 12
-    assert all(o.get("help") for o in ops["ops"])  # every op has CLI help
+    assert len(ops["ops"]) == len(all_ops()) and len(ops["ops"]) >= 41  # includes the M6 transform ops
+    assert all(o.get("help") for o in ops["ops"])  # every op resolving in this env has CLI help
     segop = api.describe_op("logical.segop")
     assert segop["op_id"] == "logical.segop" and segop["scope"] == "per_run"
     assert any(s["slot"] == "i" for s in segop["inputs"])

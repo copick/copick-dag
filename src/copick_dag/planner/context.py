@@ -74,3 +74,20 @@ class ProjectView:
         except Exception:
             return False
         return len(segs) > 0
+
+    def object_exists(self, uri: str, object_type: str, run_name: str) -> bool:
+        """True if at least one object of ``object_type`` matching ``uri`` exists in ``run_name``.
+
+        Segmentations keep the original fast path (byte-identical precondition behaviour); other
+        object types dispatch to copick's own object-type-generic resolver."""
+        if object_type == "segmentation":
+            return self.segmentation_exists(uri, run_name)
+        from copick.util.uri import resolve_copick_objects
+
+        if self.root.get_run(run_name) is None:
+            return False
+        try:
+            objs = resolve_copick_objects(uri, self.root, object_type, run_name=run_name)
+        except Exception:
+            return False
+        return len(objs) > 0

@@ -141,20 +141,27 @@ def base_nodes(spec: GraphSpec) -> Tuple[List[GraphNode], set]:
     return nodes, gc_ids
 
 
+def _core_op(kind: str, object_type: str) -> str:
+    """Registry op_id for a cp/mv/rm on ``object_type``. Segmentation keeps the bare ``core.<kind>``
+    (backward-compatible); other types use the ``core.<kind>-<object_type>`` variant."""
+    return f"core.{kind}" if object_type == "segmentation" else f"core.{kind}-{object_type}"
+
+
 def _finalize_nodes(fin: FinalizeSpec) -> Tuple[List[GraphNode], set]:
     out: List[GraphNode] = []
     gc_ids: set = set()
     for i, c in enumerate(fin.copies):
-        out.append(GraphNode(id=f"finalize_cp_{i}", op="core.cp", inputs={"src": c.src}, out={"dst": c.dst},
-                             optional=c.optional, params={"overwrite": c.overwrite}))
+        out.append(GraphNode(id=f"finalize_cp_{i}", op=_core_op("cp", c.object_type), inputs={"src": c.src},
+                             out={"dst": c.dst}, optional=c.optional, params={"overwrite": c.overwrite}))
     for i, m in enumerate(fin.moves):
-        out.append(GraphNode(id=f"finalize_mv_{i}", op="core.mv", inputs={"src": m.src}, out={"dst": m.dst},
-                             optional=m.optional, params={"overwrite": m.overwrite}))
+        out.append(GraphNode(id=f"finalize_mv_{i}", op=_core_op("mv", m.object_type), inputs={"src": m.src},
+                             out={"dst": m.dst}, optional=m.optional, params={"overwrite": m.overwrite}))
     if fin.gc:
         for i, pat in enumerate(fin.gc.remove):
             nid = f"gc_rm_{i}"
             gc_ids.add(nid)
-            out.append(GraphNode(id=nid, op="core.rm", inputs={"i": pat}, optional=True, params={"force": True}))
+            out.append(GraphNode(id=nid, op=_core_op("rm", fin.gc.object_type), inputs={"i": pat},
+                                 optional=True, params={"force": True}))
     return out, gc_ids
 
 

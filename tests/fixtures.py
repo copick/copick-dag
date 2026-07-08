@@ -167,6 +167,61 @@ def read_segmentations(config_path: str, runs: List[str], user_id: str, session:
     return out
 
 
+# ---------------------------------------------------------------------------
+# Cross-type fixtures (M6): a tomogram per run so mesh/picks/tomogram ops have a grid reference.
+# ---------------------------------------------------------------------------
+
+
+def make_tomogram(run, tomo_type: str = "wbp", vs: float = VS, shape=SHAPE):
+    """Attach a (zero-filled) tomogram of ``tomo_type`` at spacing ``vs`` to ``run``."""
+    vso = run.new_voxel_spacing(voxel_size=vs, exist_ok=True)
+    tomo = vso.new_tomogram(tomo_type, exist_ok=True)
+    tomo.from_numpy(np.zeros(shape, dtype=np.float32))
+    return tomo
+
+
+def make_crosstype_fixture(base_dir: str, runs: List[str] = ("run1", "run2"), tomo_type: str = "wbp") -> str:
+    """``make_fixture`` (segmentations) + a tomogram per run -- enough of a grid for the pipeline to
+    *generate* meshes/picks via convert ops (preferred over hand-seeding mesh/picks leaves)."""
+    import copick
+
+    config_path = make_fixture(base_dir, list(runs))
+    root = copick.from_file(config_path)
+    for run_name in runs:
+        make_tomogram(root.get_run(run_name), tomo_type=tomo_type, vs=VS, shape=SHAPE)
+    return config_path
+
+
+def read_meshes(config_path: str, runs: List[str], user_id: str, session: str) -> Dict[str, object]:
+    """Read every ``*:<user_id>/<session>`` mesh, keyed ``run|object_name``."""
+    import copick
+
+    root = copick.from_file(config_path)
+    out: Dict[str, object] = {}
+    for run_name in runs:
+        run = root.get_run(run_name)
+        if run is None:
+            continue
+        for m in run.get_meshes(user_id=user_id, session_id=session):
+            out[f"{run_name}|{m.pickable_object_name}"] = m
+    return out
+
+
+def read_picks(config_path: str, runs: List[str], user_id: str, session: str) -> Dict[str, object]:
+    """Read every ``*:<user_id>/<session>`` pick set, keyed ``run|object_name``."""
+    import copick
+
+    root = copick.from_file(config_path)
+    out: Dict[str, object] = {}
+    for run_name in runs:
+        run = root.get_run(run_name)
+        if run is None:
+            continue
+        for p in run.get_picks(user_id=user_id, session_id=session):
+            out[f"{run_name}|{p.pickable_object_name}"] = p
+    return out
+
+
 def read_final_segmentations(config_path: str, runs: List[str], session: str = "final-training") -> Dict[str, np.ndarray]:
     """Read every ``*:napari/<session>@20`` segmentation into a dict keyed ``run|name``."""
     import copick

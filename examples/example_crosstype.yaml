@@ -1,0 +1,37 @@
+# A multi-object-type pipeline (M6): segmentation -> mesh -> mesh -> segmentation -> file export.
+# Exercises cross-type edge inference (seg<->mesh), a vs-free mesh op, a tomogram grid reference,
+# per-slot @vs handling, and a terminal barrier sink -- runnable on both the bash and nextflow
+# backends. Substitute the ${...} placeholders for your project (a segmentation `cell:napari/…` and a
+# `wbp` tomogram at the target spacing must exist; see tests/fixtures.py::make_crosstype_fixture).
+version: 1
+project:
+  config: ${CONFIG_PATH}
+defaults: {voxel_spacing: 20.0}
+
+nodes:
+  # seg -> mesh (marching cubes over the segmentation surface)
+  - id: surf
+    op: convert.seg2mesh
+    params: {level: 0.5, step_size: 1}
+    in:  {i: "cell:napari/manual-scaled"}
+    out: {o: "cell:seg2mesh/surf"}
+
+  # mesh -> mesh (convex hull; a vs-free op -- never rides the voxel-spacing sweep)
+  - id: hull
+    op: process.hull
+    params: {hull_type: convex}
+    in:  {i: "cell:seg2mesh/surf"}
+    out: {o: "cell:hull/convex"}
+
+  # mesh -> seg (voxelize back onto the wbp grid at the target spacing)
+  - id: revox
+    op: convert.mesh2seg
+    params: {tomo_type: wbp, mode: watertight}
+    in:  {i: "cell:hull/convex"}
+    out: {o: "cell:mesh2seg/hull@20.0"}
+
+  # terminal BARRIER: export the recovered segmentation to files, self-wired via --segmentation-uri
+  - id: dump
+    op: export.segmentation
+    params: {output_format: mrc, output_dir: "${OUT_DIR}"}
+    in:  {i: "cell:mesh2seg/hull@20.0"}

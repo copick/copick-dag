@@ -1,31 +1,43 @@
 """URI helpers for copick-dag.
 
-Thin wrappers over :mod:`copick.util.uri` that add the operations the planner and emitters need:
-splitting/attaching the ``@voxel_spacing`` suffix, ``${var}`` substitution, pattern detection, and
-the component-wise producer->consumer match used for edge inference.
+Thin wrappers over :mod:`copick.util.uri` that add the operations the planner and emitters need but
+copick's project-resolution API does not provide: the ``@voxel_spacing`` suffix manipulation the
+emitters need, ``${var}`` substitution, and -- the real reason this module exists -- the *abstract*
+producer<->consumer URI overlap used for offline edge inference (copick can only match a concrete
+value against a pattern, or resolve a URI against a live project).
 
-We match segmentation URIs by their four components ``(name, user_id, session_id, voxel_spacing)``.
-Voxel spacing is compared numerically (copick uses *exact* float equality); everything else uses
-copick's glob/regex matcher.
+Every copick object type is addressed differently (picks/mesh carry no voxel spacing; segmentation,
+tomogram, and feature do). We parse each URI *by its object type* via ``parse_copick_uri`` and match
+component-wise: glob/regex per identity component AND numeric match on ``voxel_spacing`` for the
+vs-carrying types. For segmentations this reproduces the historical ``SegURI`` behaviour exactly.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from copick.util.uri import _matches_numeric_pattern, _matches_pattern, parse_copick_uri
 
 _VAR_RE = re.compile(r"\$\{(\w+)\}")
+
+# identity components (excluding voxel spacing) in the order they are matched, per object type.
+_IDENTITY_KEYS: Dict[str, Tuple[str, ...]] = {
+    "picks": ("object_name", "user_id", "session_id"),
+    "mesh": ("object_name", "user_id", "session_id"),
+    "segmentation": ("name", "user_id", "session_id"),
+    "tomogram": ("tomo_type",),
+    "feature": ("tomo_type", "feature_type"),
+}
+# object types whose URIs carry an ``@voxel_spacing`` component.
+_VS_TYPES = frozenset({"segmentation", "tomogram", "feature"})
 
 
 def substitute(text: str, mapping: Dict[str, object]) -> str:
     """Replace ``${var}`` placeholders in ``text`` using ``mapping``.
 
     A missing variable is left untouched (so a literal URI with no placeholders passes through).
-    Floats that are integer-valued are rendered without a trailing ``.0`` only when the mapping
-    value is already a string; numeric values are rendered with ``repr``-free ``str``.
     """
 
     def repl(m: re.Match) -> str:
@@ -45,23 +57,32 @@ def _fmt(value: object) -> str:
 
 
 def is_pattern(uri: str) -> bool:
-    """True if the URI contains a glob/regex wildcard (``*``, ``?``, ``[``, or an ``re:`` prefix)."""
-    body = uri
+    """True if the URI contains a glob/regex wildcard (``*``, ``?``, ``[``, an ``re:`` prefix, or a
+    ``{placeholder}`` fan-out template). A trailing ``?query`` (e.g. ``?multilabel=true``) is ignored
+    so it is never mistaken for a ``?`` glob."""
+    body = uri.split("?", 1)[0]
     if body.startswith("re:"):
         return True
-    return any(ch in body for ch in "*?[")
+    return any(ch in body for ch in "*?[{")
+
+
+# ---------------------------------------------------------------------------
+# @voxel_spacing suffix manipulation (query-safe: a trailing ?query is preserved)
+# ---------------------------------------------------------------------------
 
 
 def split_vs(uri: str) -> tuple[str, Optional[str]]:
-    """Split a segmentation URI into ``(uri_without_vs, vs_str_or_None)``.
+    """Split a URI into ``(uri_without_vs, vs_str_or_None)``.
 
-    Only the *last* ``@`` is treated as the voxel-spacing delimiter (object names never contain
-    ``@``). A trailing ``?multilabel=...`` query is preserved on the vs part.
+    Only the last ``@`` *before* any ``?query`` is the voxel-spacing delimiter (object names never
+    contain ``@``). The query, if present, stays attached to the returned base so round-trips are
+    lossless -- this is what keeps a ``…@10?multilabel=true`` URI from corrupting the vs.
     """
-    if "@" not in uri:
+    body, sep, query = uri.partition("?")
+    if "@" not in body:
         return uri, None
-    base, vs = uri.rsplit("@", 1)
-    return base, vs
+    base, vs = body.rsplit("@", 1)
+    return base + sep + query, vs
 
 
 def get_vs(uri: str) -> Optional[str]:
@@ -69,21 +90,64 @@ def get_vs(uri: str) -> Optional[str]:
 
 
 def with_vs(uri: str, vs: object) -> str:
-    """Ensure the URI carries an ``@voxel_spacing`` suffix, adding ``vs`` if absent."""
-    base, existing = split_vs(uri)
+    """Ensure the URI carries an ``@voxel_spacing`` suffix, adding ``vs`` if absent (inserted before
+    any ``?query``). Only meaningful for vs-carrying types; the planner gates the call by object type.
+    """
+    body, sep, query = uri.partition("?")
+    if "@" in body:
+        base, existing = body.rsplit("@", 1)
+    else:
+        base, existing = body, None
     if existing is not None and existing != "*":
         return uri
-    return f"{base}@{_fmt(vs)}"
+    return f"{base}@{_fmt(vs)}{sep}{query}"
 
 
 def strip_vs(uri: str) -> str:
     """Return the URI without its ``@voxel_spacing`` suffix (for ``-vs``-flag style commands)."""
-    return split_vs(uri)[0]
+    body, sep, query = uri.partition("?")
+    if "@" not in body:
+        return uri
+    return body.rsplit("@", 1)[0] + sep + query
+
+
+# ---------------------------------------------------------------------------
+# parsed URIs
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ObjURI:
+    """A parsed copick URI of any object type (components may be concrete or glob/regex patterns)."""
+
+    raw: str
+    object_type: str
+    pattern_type: str  # "glob" | "regex"
+    values: Tuple[str, ...]  # identity components in match order (excludes voxel spacing)
+    voxel_spacing: Optional[str]  # None if the type carries no vs; else value or "*"
+
+    @classmethod
+    def parse(cls, uri: str, object_type: str) -> "ObjURI":
+        p = parse_copick_uri(uri, object_type)
+        keys = _IDENTITY_KEYS[object_type]
+        values = tuple((p.get(k) or "*") for k in keys)
+        vs = p.get("voxel_spacing") if object_type in _VS_TYPES else None
+        return cls(uri, object_type, p.get("pattern_type", "glob"), values, vs)
+
+    @property
+    def has_vs(self) -> bool:
+        return self.object_type in _VS_TYPES
+
+    def is_concrete(self) -> bool:
+        if any(is_pattern(v) for v in self.values):
+            return False
+        return not (self.has_vs and self.voxel_spacing in (None, "*"))
 
 
 @dataclass(frozen=True)
 class SegURI:
-    """A parsed segmentation URI (components may be concrete or glob/regex patterns)."""
+    """A parsed *segmentation* URI. Retained as a thin compatibility shim for the in-memory backend
+    and the planner's precondition check, which are segmentation-specific by design."""
 
     raw: str
     name: str
@@ -105,31 +169,29 @@ class SegURI:
         )
 
     def is_concrete(self) -> bool:
-        return not (
-            is_pattern(self.name)
-            or is_pattern(self.user_id or "")
-            or is_pattern(self.session_id or "")
-            or (self.voxel_spacing in (None, "*"))
-        )
+        return ObjURI.parse(self.raw, "segmentation").is_concrete()
 
 
-def seg_matches(producer_uri: str, consumer_pattern: str) -> bool:
+# ---------------------------------------------------------------------------
+# component-wise matching (object-type aware; default segmentation preserves call sites)
+# ---------------------------------------------------------------------------
+
+
+def seg_matches(producer_uri: str, consumer_pattern: str, object_type: str = "segmentation") -> bool:
     """Component-wise match: does concrete ``producer_uri`` satisfy ``consumer_pattern``?
 
-    Used for edge inference. ``consumer_pattern`` supplies the pattern-type (glob/regex); the
-    producer supplies concrete values. Voxel spacing is compared numerically.
-    """
-    prod = SegURI.parse(producer_uri)
-    cons = SegURI.parse(consumer_pattern)
+    The consumer supplies the pattern-type (glob/regex); the producer supplies concrete values. Voxel
+    spacing is compared numerically (only for vs-carrying types)."""
+    prod = ObjURI.parse(producer_uri, object_type)
+    cons = ObjURI.parse(consumer_pattern, object_type)
     pt = cons.pattern_type
 
-    if not _matches_pattern(prod.name or "", cons.name or "*", pt):
-        return False
-    if not _matches_pattern(prod.user_id or "", cons.user_id or "*", pt):
-        return False
-    if not _matches_pattern(prod.session_id or "", cons.session_id or "*", pt):
-        return False
+    for pv, cv in zip(prod.values, cons.values):
+        if not _matches_pattern(pv or "", cv or "*", pt):
+            return False
 
+    if not cons.has_vs:
+        return True
     cons_vs = cons.voxel_spacing
     if cons_vs in (None, "*"):
         return True
@@ -139,11 +201,13 @@ def seg_matches(producer_uri: str, consumer_pattern: str) -> bool:
     return _matches_numeric_pattern(prod_vs, cons_vs, pt)
 
 
-def same_uri(a: str, b: str) -> bool:
-    """True if two segmentation URIs address the *identical* concrete object (vs compared as float)."""
-    sa, sb = SegURI.parse(a), SegURI.parse(b)
-    if (sa.name, sa.user_id, sa.session_id) != (sb.name, sb.user_id, sb.session_id):
+def same_uri(a: str, b: str, object_type: str = "segmentation") -> bool:
+    """True if two URIs address the *identical* concrete object (vs compared as float)."""
+    sa, sb = ObjURI.parse(a, object_type), ObjURI.parse(b, object_type)
+    if sa.values != sb.values:
         return False
+    if not sa.has_vs:
+        return True
     if sa.voxel_spacing in (None, "*") or sb.voxel_spacing in (None, "*"):
         return sa.voxel_spacing == sb.voxel_spacing
     try:
@@ -152,8 +216,8 @@ def same_uri(a: str, b: str) -> bool:
         return sa.voxel_spacing == sb.voxel_spacing
 
 
-def is_concrete_uri(uri: str) -> bool:
-    return SegURI.parse(uri).is_concrete()
+def is_concrete_uri(uri: str, object_type: str = "segmentation") -> bool:
+    return ObjURI.parse(uri, object_type).is_concrete()
 
 
 def _component_overlap(a: Optional[str], b: Optional[str], a_pt: str, b_pt: str) -> bool:
@@ -181,18 +245,18 @@ def _vs_overlap(a: Optional[str], b: Optional[str]) -> bool:
         return a == b
 
 
-def patterns_overlap(a_uri: str, b_uri: str) -> bool:
-    """Symmetric edge test: can two (possibly wildcard) segmentation URIs match a common object?
+def patterns_overlap(a_uri: str, b_uri: str, object_type: str = "segmentation") -> bool:
+    """Symmetric edge test: can two (possibly wildcard) URIs match a common object?
 
     Unlike :func:`seg_matches` (which assumes a concrete producer), this is order-independent, so a
     wildcard *producer* (e.g. split's declared ``*:split/final``) correctly matches a *concrete*
-    consumer, and vice versa.
-    """
-    a = SegURI.parse(a_uri)
-    b = SegURI.parse(b_uri)
-    return (
-        _component_overlap(a.name, b.name, a.pattern_type, b.pattern_type)
-        and _component_overlap(a.user_id, b.user_id, a.pattern_type, b.pattern_type)
-        and _component_overlap(a.session_id, b.session_id, a.pattern_type, b.pattern_type)
-        and _vs_overlap(a.voxel_spacing, b.voxel_spacing)
-    )
+    consumer, and vice versa. Both URIs are parsed as ``object_type`` (edges only connect same-type
+    producer->consumer)."""
+    a = ObjURI.parse(a_uri, object_type)
+    b = ObjURI.parse(b_uri, object_type)
+    for av, bv in zip(a.values, b.values):
+        if not _component_overlap(av, bv, a.pattern_type, b.pattern_type):
+            return False
+    if a.has_vs and not _vs_overlap(a.voxel_spacing, b.voxel_spacing):
+        return False
+    return True

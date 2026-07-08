@@ -18,7 +18,7 @@ from copick_dag.planner.edges import build_producer_index, find_producers
 from copick_dag.planner.expand import RNode, expand
 from copick_dag.plan.concrete import SCOPE_BARRIER
 from copick_dag.registry import get_op
-from copick_dag.uris import get_vs, substitute, with_vs
+from copick_dag.uris import _VS_TYPES, get_vs, substitute, with_vs
 
 
 class PlanError(ValueError):
@@ -57,9 +57,17 @@ def plan(
     groups: Dict[Tuple[str, Optional[str]], List[ConcreteTask]] = {}
 
     for r in per_run_rnodes:
+        op = get_op(r.op)
         runs = r.runs if r.runs is not None else global_runs
         for run in runs:
-            vs_axis = [r.vs] if r.vs is not None else resolve_vs_axis(spec, run, project)
+            if r.vs is not None:
+                vs_axis = [r.vs]
+            elif not op.uses_vs() or op.vs_transform:
+                # vs-free ops (picks/mesh) and vs-transforms (rescale: in@vs_in, out@vs_out) must NOT
+                # be multiplied across the voxel-spacing sweep -- that would write duplicate tasks.
+                vs_axis = [None]
+            else:
+                vs_axis = resolve_vs_axis(spec, run, project)
             for vs in vs_axis:
                 task = _build_task(r, run, vs)
                 tasks.append(task)
@@ -105,7 +113,7 @@ def _canon_uri(uri: str, vs: Optional[float], run: Optional[str], object_type: s
     if run is not None:
         mapping["run"] = run
     u = substitute(uri, mapping)
-    if object_type == "segmentation" and vs is not None:
+    if object_type in _VS_TYPES and vs is not None:
         u = with_vs(u, vs)
     return u
 
@@ -209,15 +217,19 @@ def _build_barrier_task(r: RNode, run_scope: List[str], vs: Optional[float]) -> 
 def _infer_barrier_deps(bt: ConcreteTask, per_run_tasks: List[ConcreteTask], external: List[str]) -> None:
     scope_tasks = [t for t in per_run_tasks if t.run in (bt.run_scope or [])]
     index = build_producer_index(scope_tasks)
+    op = get_op(bt.op_id)
     deps: set = set()
-    for in_uri in bt.input_uris():
-        exact, glob = find_producers(in_uri, index, exclude=bt)
-        found = exact + glob
-        if found:
-            for p in found:
-                deps.add(p.task_id)
-        else:
-            external.append(in_uri)
+    for slot, val in bt.inputs.items():
+        sspec = op.input_slot(slot)
+        otype = sspec.object_type if sspec else "segmentation"
+        for in_uri in val if isinstance(val, list) else [val]:
+            exact, glob = find_producers(in_uri, index, exclude=bt, in_object_type=otype)
+            found = exact + glob
+            if found:
+                for p in found:
+                    deps.add(p.task_id)
+            else:
+                external.append(in_uri)
     bt.deps = sorted(deps)
 
 
@@ -238,6 +250,7 @@ def _infer_group_deps(
 
     for t in group:
         r = rnode_by_id[t.node_id]
+        op = get_op(t.op_id)
         deps: set = set()
 
         for aid in r.after:
@@ -256,8 +269,10 @@ def _infer_group_deps(
                     continue
                 warnings.append(f"node {t.node_id!r}: `needs.{slot}` references unknown node {target!r}")
 
+            sspec = op.input_slot(slot)
+            otype = sspec.object_type if sspec else "segmentation"
             for in_uri in val if isinstance(val, list) else [val]:
-                exact, glob = find_producers(in_uri, index, exclude=t)
+                exact, glob = find_producers(in_uri, index, exclude=t, in_object_type=otype)
                 if exact:
                     last = _last_writer(exact, rnode_index)
                     _check_overwrite_order(exact, last, rnode_by_id, in_uri)
@@ -303,9 +318,14 @@ def _check_overwrite_order(writers: List[ConcreteTask], last: ConcreteTask, rnod
 
 
 def _check_preconditions(tasks: List[ConcreteTask], external: List[str], project: ProjectView, warnings: List[str]) -> None:
+    ext = set(external)
     for t in tasks:
-        if t.run is None:
+        if t.run is None or t.optional:
             continue
-        for u in [x for x in t.input_uris() if x in external]:
-            if not project.segmentation_exists(u, t.run) and not t.optional:
-                warnings.append(f"run {t.run!r}: required input {u!r} for {t.node_id!r} not found at plan time")
+        op = get_op(t.op_id)
+        for slot, val in t.inputs.items():
+            sspec = op.input_slot(slot)
+            otype = sspec.object_type if sspec else "segmentation"
+            for u in val if isinstance(val, list) else [val]:
+                if u in ext and not project.object_exists(u, otype, t.run):
+                    warnings.append(f"run {t.run!r}: required input {u!r} for {t.node_id!r} not found at plan time")

@@ -54,6 +54,8 @@ class OpSpec:
     object_type_positional: Optional[str] = None  # cp/mv/rm: the object-type positional arg
     streamable: bool = True
     kind: str = "op"  # "op" | "cp" | "mv" | "rm"
+    vs_transform: bool = False  # input/output carry DIFFERENT @vs (e.g. process.rescale); never sweep vs
+    plugin: Optional[str] = None  # providing package (e.g. "copick_torch"); lint tolerates its absence
 
     # -- lookups -----------------------------------------------------------
 
@@ -76,5 +78,18 @@ class OpSpec:
         return None
 
     def data_input_slots(self) -> List[SlotSpec]:
-        """Input slots that participate in data-dependency edge inference (segmentation ins/refs)."""
-        return [s for s in self.inputs if s.object_type == "segmentation"]
+        """Input slots that participate in data-dependency edge inference (all typed data ins/refs)."""
+        return list(self.inputs)
+
+    def uses_vs(self) -> bool:
+        """True if this op is bound to a voxel spacing -- it either passes ``-vs`` (``VS_FLAG``) or
+        has a *primary* (non-reference) slot of a vs-carrying object type. A vs-free-primary op (mesh/
+        picks) must NOT be multiplied across the voxel-spacing sweep even if it has a vs-carrying
+        *reference* (a tomogram/seg boundary is pinned by its URI, not swept), or it would emit
+        duplicate vs-free tasks."""
+        if self.vs_style == VS_FLAG:
+            return True
+        return any(
+            s.object_type in ("segmentation", "tomogram", "feature") and s.role != "reference"
+            for s in (*self.inputs, *self.outputs)
+        )

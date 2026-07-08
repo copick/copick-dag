@@ -11,10 +11,10 @@ from __future__ import annotations
 from typing import List, Optional
 
 from copick_dag.plan.concrete import ConcreteTask, ResolvedPlan
-from copick_dag.registry import OpSpec, get_op
+from copick_dag.registry import OpSpec, SlotSpec, get_op
 from copick_dag.registry.introspect import validate_argv
 from copick_dag.registry.spec import VS_FLAG
-from copick_dag.uris import strip_vs
+from copick_dag.uris import _VS_TYPES, strip_vs
 
 _SPECIAL = set("*?[]{}()| \t<>$\"'")
 
@@ -23,8 +23,16 @@ def _fmt_num(vs: float) -> str:
     return str(vs)
 
 
-def _fmt_uri(uri: str, op: OpSpec) -> str:
-    return strip_vs(uri) if op.vs_style == VS_FLAG else uri
+def _slot_otype(slot: Optional[SlotSpec]) -> str:
+    return slot.object_type if slot is not None else "segmentation"
+
+
+def _fmt_uri(uri: str, object_type: str, op: OpSpec) -> str:
+    """Strip ``@vs`` only for a ``-vs``-flag op *and* a vs-carrying slot type -- so a mixed-type op
+    (mesh primary + seg/tomo reference) keeps ``@vs`` on the reference URIs."""
+    if op.vs_style == VS_FLAG and object_type in _VS_TYPES:
+        return strip_vs(uri)
+    return uri
 
 
 def task_argv(task: ConcreteTask, config: str) -> List[str]:
@@ -33,8 +41,8 @@ def task_argv(task: ConcreteTask, config: str) -> List[str]:
     argv: List[str] = list(op.cli_path)
 
     if op.kind in ("cp", "mv"):
-        src = _fmt_uri(_single(task.inputs.get("src")), op)
-        dst = _fmt_uri(task.outputs.get("dst"), op)
+        src = _fmt_uri(_single(task.inputs.get("src")), _slot_otype(op.input_slot("src")), op)
+        dst = _fmt_uri(task.outputs.get("dst"), _slot_otype(op.output_slot("dst")), op)
         argv += [op.object_type_positional, src, dst, "-c", config]
         if task.run is not None:
             argv += ["-r", task.run]
@@ -43,7 +51,7 @@ def task_argv(task: ConcreteTask, config: str) -> List[str]:
         return argv
 
     if op.kind == "rm":
-        uri = _fmt_uri(_single(task.inputs.get("i")), op)
+        uri = _fmt_uri(_single(task.inputs.get("i")), _slot_otype(op.input_slot("i")), op)
         argv += [op.object_type_positional, uri, "-c", config]
         if task.run is not None:
             argv += ["-r", task.run]
@@ -66,7 +74,7 @@ def task_argv(task: ConcreteTask, config: str) -> List[str]:
         if val is None:
             continue
         for u in val if isinstance(val, list) else [val]:
-            argv += [slot.flag, _fmt_uri(u, op)]
+            argv += [slot.flag, _fmt_uri(u, slot.object_type, op)]
 
     for p in op.params:
         if p.name not in task.params:
@@ -87,7 +95,7 @@ def task_argv(task: ConcreteTask, config: str) -> List[str]:
         val = task.outputs.get(slot.slot)
         if val is None:
             continue
-        argv += [slot.flag, _fmt_uri(val, op)]
+        argv += [slot.flag, _fmt_uri(val, slot.object_type, op)]
 
     return argv
 
