@@ -17,8 +17,9 @@ from copick_dag.backends.bash import render_bash
 from copick_dag.backends.bash.emitter import task_argv
 from copick_dag.backends.memory import run_memory
 from copick_dag.backends.nextflow import render_nextflow, render_nextflow_config, render_subworkflow
-from copick_dag.backends.nextflow.emitter import _name_map
+from copick_dag.backends.nextflow.emitter import _build_units, _command_template, _unit_names
 from copick_dag.ir.model import GraphNode, GraphSpec
+from copick_dag.plan.concrete import SCOPE_BARRIER
 from copick_dag.planner import ProjectView, plan
 from fixtures import (
     M3A_RUNS,
@@ -63,55 +64,71 @@ def _wf_line(nf, cvar):
     return next(ln for ln in nf.splitlines() if ln.strip().startswith(f"{cvar} = "))
 
 
-def test_command_equivalence_to_bash(tmp_path):
+def _cmd_opt(task, config):
+    return _cmd(task, config) + (" || true" if task.optional else "")
+
+
+def test_command_equivalence_templated(tmp_path):
+    """Each per-run process runs `copick ` + task_argv with the run templated as ${run}; substituting
+    a concrete run back reproduces the bash command exactly (command-equivalence, modulo the run)."""
     rp = _plan(tmp_path)
     nf = render_nextflow(rp)
     assert "nextflow.enable.dsl = 2" in nf
-    for t in rp.tasks:
-        assert _cmd(t, rp.config) in nf, f"missing command for {t.task_id}"
+    for u in _build_units(rp):
+        if u.scope == SCOPE_BARRIER:
+            continue
+        tpl = _command_template(u.rep, rp.config)  # copick ... '-r' '${run}' ...
+        assert tpl in nf, f"missing templated command for node {u.node_id}"
+        t = next(x for x in rp.tasks if (x.node_id, x.voxel_spacing) == u.key)
+        assert tpl.replace("${run}", t.run) == _cmd_opt(t, rp.config)
 
 
-def test_optional_has_or_true_and_always_emits_token(tmp_path):
+def test_one_process_per_node_not_per_task(tmp_path):
+    """The whole point: one process per (node, vs), not per (run x node) -- so the module size is
+    independent of the run count."""
+    rp = _plan(tmp_path, with_stats=True)
+    nf = render_nextflow(rp)
+    procs = re.findall(r"^process (\S+) \{", nf, re.M)
+    units = _build_units(rp)
+    assert len(procs) == len(units)
+    assert len(procs) == len(set(procs))         # unique
+    assert len(rp.tasks) > len(units)            # fewer processes than task instances
+    for p in procs:
+        assert re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", p), p
+
+
+def test_perrun_io_and_optional(tmp_path):
     rp = _plan(tmp_path)
     nf = render_nextflow(rp)
-    # every task (optional or not) emits its done token
-    for t in rp.tasks:
-        assert f"val '{t.task_id}'" in nf
-    opt = [t for t in rp.tasks if t.optional]
-    nonopt = [t for t in rp.tasks if not t.optional]
+    assert "input:\n    val run" in nf and "output:\n    val run" in nf  # per-run token
+    units = _build_units(rp)
+    opt = [u for u in units if u.optional and u.scope != SCOPE_BARRIER]
+    nonopt = [u for u in units if not u.optional and u.scope != SCOPE_BARRIER]
     assert opt and nonopt
-    for t in opt:  # optional -> || true
-        assert _cmd(t, rp.config) + " || true" in nf
-    for t in nonopt:  # non-optional -> no || true
-        assert _cmd(t, rp.config) + " || true" not in nf
+    for u in opt:
+        assert _command_template(u.rep, rp.config).endswith("|| true")
+    for u in nonopt:
+        assert not _command_template(u.rep, rp.config).endswith("|| true")
 
 
 def test_render_subworkflow_composable(tmp_path):
     """render_subworkflow emits a named take/main/emit workflow a host pipeline can include+call."""
     rp = _plan(tmp_path)
     wf = render_subworkflow(rp, "COPICK_DAG_CLEANUP", label="copick_cpu")
-
-    # A named, composable sub-workflow -- NOT a standalone top-level `workflow {}`.
     assert "workflow COPICK_DAG_CLEANUP {" in wf
     assert "  take:\n    gate" in wf
     assert "  main:" in wf
     assert "  emit:\n    done = " in wf
-    assert "Channel.value('start')" not in wf  # roots gate on the take input, not a local start
-
-    # Per-process label (host config maps it to a container/resources) + per-DAG name prefix.
     assert "label 'copick_cpu'" in wf
-    assert wf.count("process COPICK_DAG_CLEANUP_p_") == len(rp.tasks)  # one process per task
 
-    # Same commands as the standalone/bash backends (command-equivalence preserved).
-    for t in rp.tasks:
-        assert _cmd(t, rp.config) in wf
-
-    # Root tasks (no deps) gate on the `gate` take-input; non-roots on their dep channels.
-    names = _name_map(rp.topo_order())
-    roots = [t for t in rp.tasks if not t.deps]
+    units = _build_units(rp)
+    names = _unit_names(units)
+    assert wf.count("process COPICK_DAG_CLEANUP_p_") == len(units)  # one process per node
+    # roots fan the runs out of the take gate; non-roots gate on their dep channels
+    roots = [u for u in units if not u.dep_keys and u.scope != SCOPE_BARRIER]
     assert roots
-    for t in roots:
-        assert _wf_line(wf, f"c_{names[t.task_id]}").endswith("(gate).first()")
+    for u in roots:
+        assert "gate.flatMap { runsList }" in _wf_line(wf, f"c_{names[u.key]}")
 
 
 def test_render_subworkflow_unique_prefix_across_dags(tmp_path):
@@ -124,41 +141,48 @@ def test_render_subworkflow_unique_prefix_across_dags(tmp_path):
     assert "workflow COPICK_DAG_A {" in a and "workflow COPICK_DAG_B {" in b
 
 
-def test_dependency_wiring(tmp_path):
+def test_dependency_wiring_channels(tmp_path):
     rp = _plan(tmp_path)
     nf = render_nextflow(rp)
-    names = _name_map(rp.topo_order())
-    for t in rp.tasks:
-        wl = _wf_line(nf, f"c_{names[t.task_id]}")
-        if not t.deps:
-            assert "(start)" in wl
-        elif len(t.deps) == 1:
-            assert f"(c_{names[t.deps[0]]})" in wl
+    units = _build_units(rp)
+    names = _unit_names(units)
+    for u in units:
+        wl = _wf_line(nf, f"c_{names[u.key]}")
+        if u.scope == SCOPE_BARRIER:
+            assert ".collect()" in wl
+        elif not u.dep_keys:
+            assert "Channel.fromList(runsList)" in wl        # standalone root fans the runs
+        elif len(u.dep_keys) == 1:
+            assert f"(c_{names[u.dep_keys[0]]})" in wl
         else:
-            assert ".mix(" in wl and ".collect()" in wl
-            for d in t.deps:
-                assert f"c_{names[d]}" in wl
+            assert ".join(" in wl                            # multi-input: per-run join
+            for dk in u.dep_keys:
+                assert f"c_{names[dk]}" in wl
 
 
-def test_barrier_multi_r_and_collect(tmp_path):
+def test_barrier_bakes_runset_and_collect(tmp_path):
     rp = _plan(tmp_path, with_stats=True)
     nf = render_nextflow(rp)
-    bt = next(t for t in rp.tasks if t.scope == "barrier")
-    cmd = _cmd(bt, rp.config)
-    assert cmd.count("'-r'") == len(M3A_RUNS) == 2  # aggregates over the row's runs
+    units = _build_units(rp)
+    names = _unit_names(units)
+    bu = next(u for u in units if u.scope == SCOPE_BARRIER)
+    cmd = _cmd_opt(bu.rep, rp.config)
+    assert cmd.count("'-r'") == len(M3A_RUNS) == 2  # bakes the whole run-set
     assert cmd in nf
-    names = _name_map(rp.topo_order())
-    assert ".collect()" in _wf_line(nf, f"c_{names[bt.task_id]}")
+    assert ".collect()" in _wf_line(nf, f"c_{names[bu.key]}")
 
 
-def test_process_names_unique_and_valid(tmp_path):
-    rp = _plan(tmp_path, with_stats=True)
+def test_module_size_independent_of_run_count(tmp_path):
+    """Scale guard: many runs -> same process count and no Groovy-oversized (>65535) string."""
+    csv = make_m3a_csv(str(tmp_path / "excl.csv"))
+    spec = GraphSpec.from_yaml(GRAPH)
+    spec.project.config = "/abs/config.json"
+    spec.sweep.over[0]["csv"] = csv
+    spec.sweep.over[0]["runs"] = [f"run{i}" for i in range(400)]
+    rp = plan(spec)
     nf = render_nextflow(rp)
-    procs = re.findall(r"^process (\S+) \{", nf, re.M)
-    assert len(procs) == len(rp.tasks)
-    assert len(procs) == len(set(procs))  # unique
-    for p in procs:
-        assert re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", p), p
+    assert len(re.findall(r"^process ", nf, re.M)) == len(_build_units(rp))
+    assert max((len(ln) for ln in nf.splitlines()), default=0) < 65535
 
 
 def test_config_has_local_and_slurm_profiles():

@@ -83,7 +83,10 @@ def test_render_bash_and_nextflow(tmp_path):
     b = api.render_graph(g, backend="bash")
     assert b["backend"] == "bash" and "copick process split" in b["script"]
     n = api.render_graph(g, backend="nextflow")
-    assert n["script"].count("process p_") == 28 and "slurm" in n["nextflow_config"]
+    # One process per node (not per run x node): the M3A graph has 14 nodes over 2 runs (28 tasks),
+    # and the runs fan out over a channel -- so the module is per-node and run-count-independent.
+    assert n["script"].count("process p_") == 14 and "runsList" in n["script"]
+    assert "slurm" in n["nextflow_config"]
 
 
 def test_visualize(tmp_path):
