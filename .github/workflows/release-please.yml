@@ -104,7 +104,7 @@ jobs:
           uv pip install --python /tmp/copick-dag-release-full/bin/python "copick-dag[torch] @ file://${WHEEL_PATH}"
           /tmp/copick-dag-release-full/bin/python -c "import importlib.metadata as m; assert m.version('copick') == '2.0.0a1'; assert m.version('copick-utils') == '2.0.0a1'; assert m.version('copick-torch') == '2.0.0a1'; from copick_dag.registry import get_op; from copick_dag.registry.introspect import operation_available; assert all(operation_available(get_op(op)) for op in ('convert.seg2slab', 'convert.picks2slab', 'process.downsample', 'process.bandpass'))"
 
-      - name: Preserve validated artifacts
+      - name: Preserve validated artifacts without publishing
         uses: actions/upload-artifact@v7
         with:
           name: copick-dag-${{ needs.release-please.outputs.sha }}
@@ -112,24 +112,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-  publish-pypi-package:
-    name: Publish validated Python package to PyPI
-    runs-on: ubuntu-latest
-    needs: [release-please, build-release]
-    if: needs.release-please.outputs.release_created == 'true'
-    environment:
-      name: pypi
-      url: https://pypi.org/p/copick-dag
-    permissions:
-      id-token: write
-    steps:
-      - name: Download validated artifacts
-        uses: actions/download-artifact@v7
-        with:
-          name: copick-dag-${{ needs.release-please.outputs.sha }}
-          path: dist/
-
-      - name: Publish distribution to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist
+  # PyPI publication is intentionally disabled. Release Please may create a
+  # GitHub release, but this workflow stops after validating and retaining the
+  # artifacts. Adding a publisher requires a separate, explicit repository
+  # change and review.
