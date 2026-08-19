@@ -37,6 +37,9 @@ class RunCache:
     def evict(self, uri: str) -> None:
         self.arrays.pop(uri, None)
 
+    def clear(self) -> None:
+        self.arrays.clear()
+
 
 def seg_uri(name: str, user_id: str, session_id: str, voxel_size) -> str:
     return f"{name}:{user_id}/{session_id}@{voxel_size}"
@@ -64,8 +67,13 @@ class CacheSeg:
         return self._real.numpy(*args, **kwargs)
 
     def from_numpy(self, data, *args, **kwargs):
+        result = self._real.from_numpy(data, *args, **kwargs)
         self._cache.put(self._uri, data)
-        return self._real.from_numpy(data, *args, **kwargs)
+        return result
+
+    @property
+    def cache_uri(self) -> str:
+        return self._uri
 
 
 class MemoryOverlayRun:

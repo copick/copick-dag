@@ -1,0 +1,30 @@
+name: Python Linting
+
+on:
+  pull_request:
+  push:
+    branches: [main, v2.0]
+
+jobs:
+  pre_commit_checks:
+    name: pre-commit checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.5"
+      - name: Verify Python version
+        run: >
+          python -c
+          "import sys; v = sys.version_info;
+          assert (v.major, v.minor) == (3, 12), sys.version;
+          assert v.releaselevel == 'final', sys.version;
+          print(sys.version)"
+      - name: Install action-validator with asdf
+        uses: asdf-vm/actions/install@v4
+        with:
+          tool_versions: |
+            action-validator 0.6.0
+      - name: Run pre-commit checks
+        uses: pre-commit/action@v3.0.1

@@ -8,12 +8,63 @@ assemble the full command tree, then navigates a registry ``cli_path`` to the co
 from __future__ import annotations
 
 import functools
-from typing import Dict, List, Optional, Sequence, Set, Tuple
+from typing import List, Optional, Sequence, Set, Tuple
 
 import click
 
 from copick_dag.registry.overlay import OPS
 from copick_dag.registry.spec import OpSpec
+
+
+class MissingOperationDependency(RuntimeError):
+    """A selected operation is not provided by the current installation."""
+
+
+def _plugin_package(op: OpSpec) -> str:
+    return (op.plugin or "").replace("_", "-")
+
+
+def unavailable_operation_message(op: OpSpec) -> str:
+    """Return an actionable error for an operation missing from the installed CLI."""
+    if op.plugin:
+        package = _plugin_package(op)
+        extra = "torch" if package == "copick-torch" else package
+        return (
+            f"operation {op.op_id!r} requires optional package {package!r}; " f"install 'copick-dag[{extra}]' and retry"
+        )
+    return f"operation {op.op_id!r} is unavailable because CLI path {op.cli_path!r} does not resolve"
+
+
+def operation_available(op: OpSpec) -> bool:
+    """Whether the operation's Click command is installed in this environment."""
+    return resolve_command(op.cli_path) is not None
+
+
+def require_operation(op: OpSpec) -> None:
+    """Raise a clear dependency error when a selected operation is unavailable."""
+    if not operation_available(op):
+        raise MissingOperationDependency(unavailable_operation_message(op))
+
+
+def selected_operation_issues(plan) -> List[str]:
+    """List missing-command errors for the operations selected by a concrete plan."""
+    issues: List[str] = []
+    seen: Set[str] = set()
+    for task in plan.tasks:
+        if task.op_id in seen:
+            continue
+        seen.add(task.op_id)
+        op = OPS[task.op_id]
+        if not operation_available(op):
+            issues.append(unavailable_operation_message(op))
+    return issues
+
+
+def require_plan_operations(plan) -> None:
+    """Require every command selected by a concrete plan."""
+    issues = selected_operation_issues(plan)
+    if issues:
+        raise MissingOperationDependency("; ".join(issues))
 
 
 @functools.lru_cache(maxsize=1)

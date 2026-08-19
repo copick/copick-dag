@@ -21,15 +21,34 @@ def synth_ops():
         OPS[op.op_id] = op
         added.append(op.op_id)
 
-    reg(OpSpec(op_id="t.meshop", cli_path=("t", "meshop"), vs_style=VS_URI,
-               inputs=[SlotSpec("i", object_type="mesh", flag="-i")],
-               outputs=[SlotSpec("o", object_type="mesh", flag="-o")]))
-    reg(OpSpec(op_id="t.segop", cli_path=("t", "segop"), vs_style=VS_URI,
-               inputs=[SlotSpec("i", object_type="segmentation", flag="-i")],
-               outputs=[SlotSpec("o", object_type="segmentation", flag="-o")]))
-    reg(OpSpec(op_id="t.rescale", cli_path=("t", "rescale"), vs_style=VS_URI, vs_transform=True,
-               inputs=[SlotSpec("i", object_type="segmentation", flag="-i")],
-               outputs=[SlotSpec("o", object_type="segmentation", flag="-o")]))
+    reg(
+        OpSpec(
+            op_id="t.meshop",
+            cli_path=("t", "meshop"),
+            vs_style=VS_URI,
+            inputs=[SlotSpec("i", object_type="mesh", flag="-i")],
+            outputs=[SlotSpec("o", object_type="mesh", flag="-o")],
+        )
+    )
+    reg(
+        OpSpec(
+            op_id="t.segop",
+            cli_path=("t", "segop"),
+            vs_style=VS_URI,
+            inputs=[SlotSpec("i", object_type="segmentation", flag="-i")],
+            outputs=[SlotSpec("o", object_type="segmentation", flag="-o")],
+        )
+    )
+    reg(
+        OpSpec(
+            op_id="t.rescale",
+            cli_path=("t", "rescale"),
+            vs_style=VS_URI,
+            vs_transform=True,
+            inputs=[SlotSpec("i", object_type="segmentation", flag="-i")],
+            outputs=[SlotSpec("o", object_type="segmentation", flag="-o")],
+        )
+    )
     yield
     for k in added:
         OPS.pop(k, None)
@@ -45,11 +64,13 @@ def _plan_offline(nodes, voxel_spacings=None):
 def test_no_false_cross_type_match(synth_ops):
     # A writes a MESH x:u/s ; B writes a SEG x:u/s@10 ; C reads a MESH x:u/s.
     # C must depend on A (mesh) and NOT on B (seg) -- same identity string, different object type.
-    rp = _plan_offline([
-        {"id": "A", "op": "t.meshop", "in": {"i": "src:u/s"}, "out": {"o": "x:u/s"}},
-        {"id": "B", "op": "t.segop", "in": {"i": "seed:p/q@10.0"}, "out": {"o": "x:u/s@10.0"}},
-        {"id": "C", "op": "t.meshop", "in": {"i": "x:u/s"}, "out": {"o": "y:u/s"}},
-    ])
+    rp = _plan_offline(
+        [
+            {"id": "A", "op": "t.meshop", "in": {"i": "src:u/s"}, "out": {"o": "x:u/s"}},
+            {"id": "B", "op": "t.segop", "in": {"i": "seed:p/q@10.0"}, "out": {"o": "x:u/s@10.0"}},
+            {"id": "C", "op": "t.meshop", "in": {"i": "x:u/s"}, "out": {"o": "y:u/s"}},
+        ]
+    )
     by_node = {t.node_id: t for t in rp.tasks}
     dep_nodes = {rp.by_id()[d].node_id for d in by_node["C"].deps}
     assert "A" in dep_nodes and "B" not in dep_nodes
@@ -89,7 +110,9 @@ def test_multilabel_query_roundtrip():
 def test_multilabel_query_does_not_break_overlap():
     # two multilabel seg URIs at the same spacing still overlap (vs parsed cleanly, not corrupted)
     assert patterns_overlap(
-        "membrane:pred/1@10.0?multilabel=true", "membrane:pred/1@10.0?multilabel=true", "segmentation",
+        "membrane:pred/1@10.0?multilabel=true",
+        "membrane:pred/1@10.0?multilabel=true",
+        "segmentation",
     )
 
 
@@ -111,11 +134,32 @@ def _plan_fixture(tmp_path, nodes, runs=("run1",), defaults=None):
 
 
 def test_real_mesh_chain_edges_and_no_vs_multiply(tmp_path):
-    rp, by_node, by_id = _plan_fixture(tmp_path, [
-        {"id": "to_mesh", "op": "convert.seg2mesh", "in": {"i": "cell:napari/manual-scaled"}, "out": {"o": "cell:m/s"}},
-        {"id": "merge", "op": "logical.meshop", "params": {"operation": "union"}, "in": {"i": ["cell:m/s"]}, "out": {"o": "cell:mm/s"}},
-        {"id": "back", "op": "convert.mesh2seg", "params": {"tomo_type": "wbp"}, "in": {"i": "cell:mm/s"}, "out": {"o": "cell:v/0@20.0"}},
-    ], defaults={"voxel_spacing": 20.0})
+    rp, by_node, by_id = _plan_fixture(
+        tmp_path,
+        [
+            {
+                "id": "to_mesh",
+                "op": "convert.seg2mesh",
+                "in": {"i": "cell:napari/manual-scaled"},
+                "out": {"o": "cell:m/s"},
+            },
+            {
+                "id": "merge",
+                "op": "logical.meshop",
+                "params": {"operation": "union"},
+                "in": {"i": ["cell:m/s"]},
+                "out": {"o": "cell:mm/s"},
+            },
+            {
+                "id": "back",
+                "op": "convert.mesh2seg",
+                "params": {"tomo_type": "wbp"},
+                "in": {"i": "cell:mm/s"},
+                "out": {"o": "cell:v/0@20.0"},
+            },
+        ],
+        defaults={"voxel_spacing": 20.0},
+    )
     assert {by_id[d].node_id for d in by_node["merge"].deps} == {"to_mesh"}
     assert {by_id[d].node_id for d in by_node["back"].deps} == {"merge"}
     assert by_node["merge"].voxel_spacing is None  # mesh op is vs-free -> not swept
@@ -123,23 +167,44 @@ def test_real_mesh_chain_edges_and_no_vs_multiply(tmp_path):
 
 
 def test_tomogram_primary_and_reference_edges(tmp_path):
-    rp, by_node, by_id = _plan_fixture(tmp_path, [
-        {"id": "ds", "op": "process.downsample", "in": {"i": "wbp@10.0"}, "out": {"o": "wbp@20.0"}},
-        {"id": "vb", "op": "process.validbox", "in": {"t": "wbp@20.0"}, "out": {"o": "b:vb/x"}},
-        {"id": "mp", "op": "convert.mesh2picks", "params": {"sampling_type": "surface"},
-         "in": {"i": "b:vb/x", "t": "wbp@20.0"}, "out": {"o": "r:mp/x"}},
-    ])
-    assert {by_id[d].node_id for d in by_node["vb"].deps} == {"ds"}          # tomogram producer -> tomo ref
-    assert {by_id[d].node_id for d in by_node["mp"].deps} == {"vb", "ds"}    # mesh chain + tomo ref
+    rp, by_node, by_id = _plan_fixture(
+        tmp_path,
+        [
+            {"id": "ds", "op": "process.downsample", "in": {"i": "wbp@10.0"}, "out": {"o": "wbp@20.0"}},
+            {"id": "vb", "op": "process.validbox", "in": {"t": "wbp@20.0"}, "out": {"o": "b:vb/x"}},
+            {
+                "id": "mp",
+                "op": "convert.mesh2picks",
+                "params": {"sampling_type": "surface"},
+                "in": {"i": "b:vb/x", "t": "wbp@20.0"},
+                "out": {"o": "r:mp/x"},
+            },
+        ],
+    )
+    assert {by_id[d].node_id for d in by_node["vb"].deps} == {"ds"}  # tomogram producer -> tomo ref
+    assert {by_id[d].node_id for d in by_node["mp"].deps} == {"vb", "ds"}  # mesh chain + tomo ref
     assert by_node["ds"].voxel_spacing == 10.0 and by_node["ds"].outputs["o"] == "wbp@20.0"
 
 
 def test_rescale_vs_change_and_templated_fanin(tmp_path):
-    rp, by_node, by_id = _plan_fixture(tmp_path, [
-        {"id": "rs", "op": "process.rescale", "in": {"i": "cell:napari/manual-scaled@10.0"}, "out": {"o": "cell:r/0@20.0"}},
-        {"id": "sep", "op": "process.separate-components", "in": {"i": "cell:r/0@20.0"}, "out": {"o": "m:sc/{instance_id}@20.0"}},
-        {"id": "comb", "op": "process.combine", "in": {"i": "m:sc/*@20.0"}, "out": {"o": "ml:rc/f@20.0"}},
-    ])
+    rp, by_node, by_id = _plan_fixture(
+        tmp_path,
+        [
+            {
+                "id": "rs",
+                "op": "process.rescale",
+                "in": {"i": "cell:napari/manual-scaled@10.0"},
+                "out": {"o": "cell:r/0@20.0"},
+            },
+            {
+                "id": "sep",
+                "op": "process.separate-components",
+                "in": {"i": "cell:r/0@20.0"},
+                "out": {"o": "m:sc/{instance_id}@20.0"},
+            },
+            {"id": "comb", "op": "process.combine", "in": {"i": "m:sc/*@20.0"}, "out": {"o": "ml:rc/f@20.0"}},
+        ],
+    )
     assert by_node["rs"].inputs["i"] == "cell:napari/manual-scaled@10.0"
     assert by_node["rs"].outputs["o"] == "cell:r/0@20.0"  # distinct in/out spacings preserved
     assert {by_id[d].node_id for d in by_node["sep"].deps} == {"rs"}
@@ -147,12 +212,26 @@ def test_rescale_vs_change_and_templated_fanin(tmp_path):
 
 
 def test_export_is_a_self_wiring_barrier(tmp_path):
-    rp, by_node, by_id = _plan_fixture(tmp_path, [
-        {"id": "seg", "op": "logical.segop", "params": {"operation": "union"},
-         "in": {"i": ["membrane:data-portal/*"]}, "out": {"o": "membrane:m/f"}},
-        {"id": "exp", "op": "export.segmentation", "params": {"output_format": "mrc", "output_dir": "/tmp/o"},
-         "in": {"i": "membrane:m/f@20.0"}},
-    ], runs=("run1", "run2"), defaults={"voxel_spacing": 20.0})
+    rp, by_node, by_id = _plan_fixture(
+        tmp_path,
+        [
+            {
+                "id": "seg",
+                "op": "logical.segop",
+                "params": {"operation": "union"},
+                "in": {"i": ["membrane:data-portal/*"]},
+                "out": {"o": "membrane:m/f"},
+            },
+            {
+                "id": "exp",
+                "op": "export.segmentation",
+                "params": {"output_format": "mrc", "output_dir": "/tmp/o"},
+                "in": {"i": "membrane:m/f@20.0"},
+            },
+        ],
+        runs=("run1", "run2"),
+        defaults={"voxel_spacing": 20.0},
+    )
     exp = by_node["exp"]
     assert exp.scope == "barrier" and exp.run is None and sorted(exp.run_scope) == ["run1", "run2"]
     assert {by_id[d].run for d in exp.deps} == {"run1", "run2"}
@@ -164,11 +243,21 @@ def test_finalize_selects_cp_rm_by_object_type(tmp_path):
 
     cfg = make_fixture(str(tmp_path / "p"), ["run1"])
     graph = {
-        "version": 1, "project": {"config": cfg},
-        "nodes": [{"id": "seed", "op": "logical.meshop", "params": {"operation": "union"},
-                   "in": {"i": ["m:a/b"]}, "out": {"o": "m:c/d"}}],
-        "finalize": {"copies": [{"from": "m:c/d", "to": "m:final/0", "object_type": "mesh"}],
-                     "gc": {"remove": ["m:a/b"], "object_type": "mesh"}},
+        "version": 1,
+        "project": {"config": cfg},
+        "nodes": [
+            {
+                "id": "seed",
+                "op": "logical.meshop",
+                "params": {"operation": "union"},
+                "in": {"i": ["m:a/b"]},
+                "out": {"o": "m:c/d"},
+            }
+        ],
+        "finalize": {
+            "copies": [{"from": "m:c/d", "to": "m:final/0", "object_type": "mesh"}],
+            "gc": {"remove": ["m:a/b"], "object_type": "mesh"},
+        },
     }
     rp = plan(GraphSpec.from_dict(graph), ProjectView.open(cfg))
     ops = {t.node_id: t.op_id for t in rp.tasks}
@@ -184,19 +273,29 @@ def test_crosstype_bash_roundtrip(tmp_path):
     tomogram grid reference, and per-slot @vs on actually-run copick commands."""
     import subprocess
 
-    import numpy as np
-
     from fixtures import make_crosstype_fixture, read_meshes, read_segmentations
     from copick_dag.backends.bash import render_bash
 
     cfg = make_crosstype_fixture(str(tmp_path / "p"), ["run1"])
     graph = {
-        "version": 1, "project": {"config": cfg}, "defaults": {"voxel_spacing": 20.0},
+        "version": 1,
+        "project": {"config": cfg},
+        "defaults": {"voxel_spacing": 20.0},
         "nodes": [
-            {"id": "to_mesh", "op": "convert.seg2mesh", "params": {"level": 0.5, "step_size": 1},
-             "in": {"i": "cell:napari/manual-scaled"}, "out": {"o": "cell:seg2mesh/surf"}},
-            {"id": "to_seg", "op": "convert.mesh2seg", "params": {"tomo_type": "wbp"},
-             "in": {"i": "cell:seg2mesh/surf"}, "out": {"o": "cell:mesh2seg/vol@20.0"}},
+            {
+                "id": "to_mesh",
+                "op": "convert.seg2mesh",
+                "params": {"level": 0.5, "step_size": 1},
+                "in": {"i": "cell:napari/manual-scaled"},
+                "out": {"o": "cell:seg2mesh/surf"},
+            },
+            {
+                "id": "to_seg",
+                "op": "convert.mesh2seg",
+                "params": {"tomo_type": "wbp"},
+                "in": {"i": "cell:seg2mesh/surf"},
+                "out": {"o": "cell:mesh2seg/vol@20.0"},
+            },
         ],
     }
     rp = plan(GraphSpec.from_dict(graph), ProjectView.open(cfg))

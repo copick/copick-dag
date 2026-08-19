@@ -7,7 +7,7 @@ materialized by an emitter/executor:
 - ``bash``      -- emit a ``copick`` CLI script (reproducible, same behaviour as today).
 - ``memory``    -- run in-process with a write-through memory overlay, parallel across runs
                    and along the graph, keeping arrays in memory between ops.
-- ``nextflow``  -- (roadmap) per-run process parallelism for HPC.
+- ``nextflow``  -- per-run process parallelism for local and SLURM execution.
 
 See ``copick_dag.ir`` (the IR), ``copick_dag.registry`` (the operation registry),
 ``copick_dag.planner`` (abstract -> concrete), and ``copick_dag.backends`` (emitters).
