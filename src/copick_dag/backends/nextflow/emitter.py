@@ -39,6 +39,7 @@ from typing import Dict, List, Optional, Tuple
 
 from copick_dag.backends.bash.emitter import task_argv
 from copick_dag.plan.concrete import SCOPE_BARRIER, ConcreteTask, ResolvedPlan
+from copick_dag.registry.introspect import require_plan_operations
 
 _NON_IDENT = re.compile(r"[^A-Za-z0-9_]")
 # A token unlikely to occur in any argv; replaced by the Nextflow ${run} placeholder *after* Groovy
@@ -72,8 +73,8 @@ class _Unit:
     key: UnitKey
     node_id: str
     vs: Optional[float]
-    rep: ConcreteTask          # representative task (supplies the command + op/scope/optional)
-    runs: List[str]            # per_run: ordered runs; barrier: []
+    rep: ConcreteTask  # representative task (supplies the command + op/scope/optional)
+    runs: List[str]  # per_run: ordered runs; barrier: []
     scope: str
     optional: bool
     dep_keys: List[UnitKey] = field(default_factory=list)
@@ -97,8 +98,9 @@ def _build_units(plan: ResolvedPlan) -> List[_Unit]:
         key = (t.node_id, t.voxel_spacing)
         u = units.get(key)
         if u is None:
-            u = _Unit(key=key, node_id=t.node_id, vs=t.voxel_spacing, rep=t,
-                      runs=[], scope=t.scope, optional=t.optional)
+            u = _Unit(
+                key=key, node_id=t.node_id, vs=t.voxel_spacing, rep=t, runs=[], scope=t.scope, optional=t.optional
+            )
             units[key] = u
             run_seen[key] = set()
         if t.run is not None and t.run not in run_seen[key]:
@@ -158,8 +160,9 @@ def _command_literal(rep: ConcreteTask, config: str) -> str:
     return cmd
 
 
-def _emit_process(u: _Unit, names: Dict[UnitKey, str], config: str, *,
-                  proc_prefix: str, label: Optional[str]) -> List[str]:
+def _emit_process(
+    u: _Unit, names: Dict[UnitKey, str], config: str, *, proc_prefix: str, label: Optional[str]
+) -> List[str]:
     """Emit one process: a barrier bakes the run-set (single run); a per-run node takes ``val run``."""
     pname = f"{proc_prefix}{names[u.key]}"
     out = [f"process {pname} {{"]
@@ -201,8 +204,7 @@ def _root_runs_expr(gate_kind: str) -> str:
     return "Channel.fromList(runsList)" if gate_kind == "standalone" else "gate.flatMap { runsList }"
 
 
-def _gate_expr(u: _Unit, names: Dict[UnitKey, str], unit_by_key: Dict[UnitKey, _Unit],
-               gate_kind: str) -> str:
+def _gate_expr(u: _Unit, names: Dict[UnitKey, str], unit_by_key: Dict[UnitKey, _Unit], gate_kind: str) -> str:
     """Channel expression gating ``u``: the run channel (roots), the dep channel (single dep), a
     per-run ``join`` of dep channels (multi-input), or ``.collect()`` of deps (barriers)."""
     per_run_deps = [dk for dk in u.dep_keys if unit_by_key[dk].scope != SCOPE_BARRIER]
@@ -228,8 +230,14 @@ def _gate_expr(u: _Unit, names: Dict[UnitKey, str], unit_by_key: Dict[UnitKey, _
     return expr
 
 
-def _emit_wiring(units: List[_Unit], names: Dict[UnitKey, str], unit_by_key: Dict[UnitKey, _Unit],
-                 *, proc_prefix: str, gate_kind: str) -> List[str]:
+def _emit_wiring(
+    units: List[_Unit],
+    names: Dict[UnitKey, str],
+    unit_by_key: Dict[UnitKey, _Unit],
+    *,
+    proc_prefix: str,
+    gate_kind: str,
+) -> List[str]:
     """Emit ``c_x = <proc>(<gate>)`` lines wiring each node's process to its run/dep channel."""
     out: List[str] = []
     for u in units:
@@ -255,6 +263,7 @@ def _runs_list_literal(runs: List[str]) -> str:
 
 def render_nextflow(plan: ResolvedPlan) -> str:
     """Render the whole plan as a standalone Nextflow DSL2 workflow string."""
+    require_plan_operations(plan)
     units = _build_units(plan)
     names = _unit_names(units)
     unit_by_key = {u.key: u for u in units}
@@ -298,6 +307,7 @@ def render_subworkflow(
             Defaults to ``f"{workflow_name}_p_"``.
         include_header: prepend ``nextflow.enable.dsl = 2`` (for a one-workflow standalone file).
     """
+    require_plan_operations(plan)
     wf = _sanitize(workflow_name)
     proc_prefix = process_prefix if process_prefix is not None else f"{wf}_p_"
     units = _build_units(plan)

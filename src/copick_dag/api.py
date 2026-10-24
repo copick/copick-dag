@@ -25,7 +25,7 @@ from copick_dag.ir.model import GraphSpec
 from copick_dag.plan.concrete import ConcreteTask, ResolvedPlan
 from copick_dag.planner import PlanError, ProjectView, plan
 from copick_dag.registry import OpSpec, ParamSpec, SlotSpec, all_ops, get_op
-from copick_dag.registry.introspect import resolve_command
+from copick_dag.registry.introspect import operation_available, resolve_command, selected_operation_issues
 
 __all__ = [
     "load_graph",
@@ -102,12 +102,16 @@ def op_to_dict(op: OpSpec, include_help: bool = True) -> Dict[str, Any]:
         "vs_style": op.vs_style,
         "kind": op.kind,
         "streamable": op.streamable,
+        "available": operation_available(op),
         "inputs": [_slot_to_dict(s) for s in op.inputs],
         "outputs": [_slot_to_dict(s) for s in op.outputs],
         "params": [_param_to_dict(p) for p in op.params],
     }
     if op.object_type_positional:
         d["object_type_positional"] = op.object_type_positional
+    if op.plugin:
+        d["plugin"] = op.plugin.replace("_", "-")
+        d["install_extra"] = "torch" if op.plugin.replace("_", "-") == "copick-torch" else op.plugin
     if include_help:
         cmd = resolve_command(op.cli_path)
         d["help"] = (cmd.help or getattr(cmd, "short_help", "") or "") if cmd is not None else ""
@@ -208,6 +212,9 @@ def validate_graph(graph, config: Optional[str] = None) -> Dict[str, Any]:
         return {"valid": False, "errors": [str(e)], "warnings": []}
     except Exception as e:  # noqa: BLE001
         return {"valid": False, "errors": [f"{type(e).__name__}: {e}"], "warnings": []}
+    missing = selected_operation_issues(rp)
+    if missing:
+        return {"valid": False, "errors": missing, "warnings": rp.warnings, **_summary(rp)}
     return {"valid": True, "errors": [], "warnings": rp.warnings, **_summary(rp)}
 
 

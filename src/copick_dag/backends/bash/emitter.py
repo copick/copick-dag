@@ -12,7 +12,7 @@ from typing import List, Optional
 
 from copick_dag.plan.concrete import ConcreteTask, ResolvedPlan
 from copick_dag.registry import OpSpec, SlotSpec, get_op
-from copick_dag.registry.introspect import validate_argv
+from copick_dag.registry.introspect import require_plan_operations, validate_argv
 from copick_dag.registry.spec import VS_FLAG
 from copick_dag.uris import _VS_TYPES, strip_vs
 
@@ -122,6 +122,7 @@ def _render_line(task: ConcreteTask, config: str) -> str:
 
 def render_bash(plan: ResolvedPlan, config_var: str = "CONFIG") -> str:
     """Render the whole plan as a bash script string."""
+    require_plan_operations(plan)
     cfg = f"${{{config_var}}}"
     lines: List[str] = [
         "#!/usr/bin/env bash",

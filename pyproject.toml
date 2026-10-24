@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
@@ -12,13 +12,22 @@ keywords = ["copick", "cryoet", "cryo-et", "tomography", "pipeline", "dag", "wor
 authors = [{ name = "Utz Ermel", email = "utz.ermel@czii.org" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
 dependencies = [
-    "copick>=1.23.1",
-    "copick-utils>=1.7.0",
+    "copick>=1.23.1,<2",
+    "copick-utils>=1.7.0,<2",
     "pydantic>=2",
     "pyyaml>=6",
     "networkx>=3",
@@ -28,8 +37,22 @@ dependencies = [
 
 [project.optional-dependencies]
 dask = ["dask>=2024.1.0"]
-test = ["pytest>=8", "pytest-cov"]
-dev = ["pytest>=8", "pytest-cov", "ruff", "pre-commit"]
+torch = ["copick-torch>=1.2.0,<2; python_version >= '3.11'"]
+all = [
+    "copick-torch>=1.2.0,<2; python_version >= '3.11'",
+    "dask>=2024.1.0",
+]
+test = [
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+]
+dev = [
+    "black>=25.1.0",
+    "hatchling>=1.25.0",
+    "hatch-vcs>=0.4.0",
+    "pre-commit>=4.2.0",
+    "ruff>=0.12.0",
+]
 
 [project.scripts]
 copick-dag = "copick_dag.cli:main"
@@ -44,10 +67,33 @@ path = "src/copick_dag/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/copick_dag"]
 
+[tool.black]
+line-length = 120
+target-version = ["py310"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
 
+[tool.coverage.run]
+source_pkgs = ["copick_dag"]
+branch = true
+parallel = true
+
+[tool.coverage.paths]
+copick_dag = ["src/copick_dag", "*/copick-dag/src/copick_dag"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
 [tool.pytest.ini_options]
+minversion = "8.0"
 testpaths = ["tests"]
-markers = ["slow: end-to-end tests that shell out to the copick CLI"]
+markers = [
+    "slow: end-to-end tests that shell out to the copick CLI",
+    "torch_plugin: tests that require the optional copick-torch command plugin",
+]

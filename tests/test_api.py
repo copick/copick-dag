@@ -24,13 +24,39 @@ def test_describe_ops_and_op(tmp_path):
 
     ops = api.describe_ops()
     assert len(ops["ops"]) == len(all_ops()) and len(ops["ops"]) >= 41  # includes the M6 transform ops
-    assert all(o.get("help") for o in ops["ops"])  # every op resolving in this env has CLI help
+    assert all(o.get("help") for o in ops["ops"] if o["available"])
+    torch_ops = [o for o in ops["ops"] if o.get("plugin") == "copick-torch"]
+    assert len(torch_ops) == 4 and all(o["install_extra"] == "torch" for o in torch_ops)
     segop = api.describe_op("logical.segop")
     assert segop["op_id"] == "logical.segop" and segop["scope"] == "per_run"
     assert any(s["slot"] == "i" for s in segop["inputs"])
     stats = api.describe_op("process.seg-stats")
     assert stats["scope"] == "barrier"
     json.dumps(ops)  # serializable
+
+
+def test_validate_selected_missing_plugin_is_actionable():
+    from copick_dag.registry import get_op
+    from copick_dag.registry.introspect import operation_available
+
+    if operation_available(get_op("process.downsample")):
+        return
+    graph = {
+        "version": 1,
+        "project": {"config": "unused.json"},
+        "runs": ["run1"],
+        "nodes": [
+            {
+                "id": "downsample",
+                "op": "process.downsample",
+                "in": {"i": "wbp@10.0"},
+                "out": {"o": "wbp@20.0"},
+            },
+        ],
+    }
+    result = api.validate_graph(graph)
+    assert not result["valid"]
+    assert "copick-dag[torch]" in " ".join(result["errors"])
 
 
 def test_graph_schema_has_models():

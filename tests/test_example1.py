@@ -27,8 +27,14 @@ def test_bash_render_structure(tmp_path):
     _, rp = _plan_for(cfg)
     script = render_bash(rp)
     # every logical op group and the core object ops must appear
-    for token in ["copick logical segop", "copick logical clipseg", "copick logical enclosed",
-                  "copick cp segmentation", "copick mv segmentation", "copick rm segmentation"]:
+    for token in [
+        "copick logical segop",
+        "copick logical clipseg",
+        "copick logical enclosed",
+        "copick cp segmentation",
+        "copick mv segmentation",
+        "copick rm segmentation",
+    ]:
         assert token in script, token
     # flag-style ops strip @vs and pass -vs; uri-style keep @vs
     assert "-vs 20.0" in script
