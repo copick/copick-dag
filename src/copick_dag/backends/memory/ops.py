@@ -2,8 +2,8 @@
 
 Each adapter resolves a task's input URIs to (cache-aware) segmentation objects and calls the
 *existing* copick per-run converter with the write-through overlay run, so no array algorithm is
-reimplemented here. ``cp``/``mv``/``rm`` reuse ``copick.ops.manage`` batch functions directly (they
-operate on the durable zarr objects that write-through keeps in sync).
+reimplemented here. Segmentation ``cp``/``mv`` decode and rewrite through entity APIs, while ``rm``
+uses ``copick.ops.manage`` and checks its structured result.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import List, Optional
 from copick_dag.backends.memory.overlay import CacheSeg, MemoryOverlayRun, RunCache, seg_uri
 from copick_dag.plan.concrete import ConcreteTask
 from copick_dag.registry import get_op
+from copick_dag.registry.introspect import MissingOperationDependency, require_operation
 from copick_dag.uris import SegURI
 
 
@@ -61,6 +62,10 @@ class ExecError(RuntimeError):
 
 def exec_task(overlay: MemoryOverlayRun, root, task: ConcreteTask, cache: RunCache) -> None:
     op = get_op(task.op_id)
+    try:
+        require_operation(op)
+    except MissingOperationDependency as e:
+        raise ExecError(str(e)) from None
     if op.op_id == "logical.segop":
         _exec_segop(overlay, task, cache)
     elif op.op_id == "logical.clipseg":
@@ -104,7 +109,12 @@ def _exec_segop(overlay: MemoryOverlayRun, task: ConcreteTask, cache: RunCache) 
             # union of one == itself; write through unchanged
             arr = segs[0].numpy()
             out_seg = overlay.new_segmentation(
-                out["object_name"], out["user_id"], out["session_id"], False, out["voxel_spacing"], exist_ok=True,
+                out["object_name"],
+                out["user_id"],
+                out["session_id"],
+                False,
+                out["voxel_spacing"],
+                exist_ok=True,
             )
             out_seg.from_numpy(arr)
             return
@@ -304,6 +314,11 @@ def _exec_manage(overlay: MemoryOverlayRun, root, task: ConcreteTask, cache: Run
     heavily-mutated root that ``copy_copick_objects_batch`` is prone to. rm deletes via copick.
     """
     op = get_op(task.op_id)
+    object_type = op.object_type_positional
+    if object_type != "segmentation":
+        raise ExecError(
+            f"the memory backend does not support {op.kind} for {object_type!r}; " "use the bash or Nextflow backend",
+        )
 
     if op.kind in ("cp", "mv"):
         src_seg = _resolve_one(overlay, task.inputs["src"], cache)
@@ -312,20 +327,31 @@ def _exec_manage(overlay: MemoryOverlayRun, root, task: ConcreteTask, cache: Run
         arr = src_seg.numpy()
         dst = _out_params(task.outputs["dst"])
         out_seg = overlay.new_segmentation(
-            dst["object_name"], dst["user_id"], dst["session_id"],
-            bool(getattr(src_seg, "is_multilabel", False)), dst["voxel_spacing"], exist_ok=True,
+            dst["object_name"],
+            dst["user_id"],
+            dst["session_id"],
+            bool(getattr(src_seg, "is_multilabel", False)),
+            dst["voxel_spacing"],
+            exist_ok=bool(task.params.get("overwrite", False)),
         )
         out_seg.from_numpy(arr)
         if op.kind == "mv":
-            _remove(root, task.inputs["src"], task.run)
+            result = _remove(root, task.inputs["src"], task.run)
+            if result["deleted"] < 1:
+                raise ExecError(f"mv: destination was written but source {task.inputs['src']!r} was not removed")
+            cache.evict(src_seg.cache_uri)
     elif op.kind == "rm":
-        _remove(root, task.inputs["i"], task.run, dry_run=bool(task.params.get("dry_run", False)))
+        dry_run = bool(task.params.get("dry_run", False))
+        _remove(root, task.inputs["i"], task.run, dry_run=dry_run)
+        if not dry_run:
+            # rm accepts patterns, so conservatively invalidate the per-run cache after durable success.
+            cache.clear()
 
 
-def _remove(root, uri: str, run: Optional[str], dry_run: bool = False) -> None:
+def _remove(root, uri: str, run: Optional[str], dry_run: bool = False) -> dict:
     from copick.ops.manage import remove_copick_objects_batch
 
-    remove_copick_objects_batch(
+    results = remove_copick_objects_batch(
         root=root,
         object_type="segmentation",
         uri=uri,
@@ -333,3 +359,21 @@ def _remove(root, uri: str, run: Optional[str], dry_run: bool = False) -> None:
         dry_run=dry_run,
         workers=1,
     )
+    errors: List[str] = []
+    deleted = 0
+    objects: List[str] = []
+    if not isinstance(results, dict):
+        raise ExecError(f"remove returned an invalid result for {uri!r}: {results!r}")
+    for run_name, result in results.items():
+        if result is None:
+            errors.append(f"run {run_name!r} failed completely")
+            continue
+        if not isinstance(result, dict):
+            errors.append(f"run {run_name!r} returned {result!r}")
+            continue
+        deleted += int(result.get("deleted", 0))
+        objects.extend(str(item) for item in result.get("objects", []))
+        errors.extend(f"run {run_name!r}: {error}" for error in result.get("errors", []))
+    if errors:
+        raise ExecError(f"remove failed for {uri!r}: {'; '.join(errors)}")
+    return {"deleted": deleted, "objects": objects, "dry_run": dry_run}

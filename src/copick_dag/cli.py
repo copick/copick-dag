@@ -11,7 +11,7 @@ import click
 from copick_dag.backends.bash import render_bash
 from copick_dag.ir.model import GraphSpec
 from copick_dag.planner import PlanError, ProjectView, plan
-from copick_dag.registry.introspect import lint_registry
+from copick_dag.registry.introspect import lint_registry, selected_operation_issues
 
 
 def _load(graph: str, config: Optional[str]):
@@ -46,6 +46,12 @@ def validate(graph: str, config: Optional[str]) -> None:
         rp = plan(spec, project, validate_preconditions=project is not None)
     except (PlanError, ValueError) as e:
         click.secho(f"INVALID: {e}", fg="red")
+        sys.exit(1)
+    missing = selected_operation_issues(rp)
+    if missing:
+        click.secho("INVALID: selected operations are unavailable:", fg="red")
+        for issue in missing:
+            click.echo(f"  - {issue}")
         sys.exit(1)
     click.secho(f"OK: {len(rp.tasks)} tasks, {len(spec.nodes)} nodes", fg="green")
     for w in rp.warnings:
@@ -100,7 +106,13 @@ def render(graph: str, config: Optional[str], backend: str, output: Optional[str
 @click.argument("graph", type=click.Path(exists=True, dir_okay=False))
 @click.option("-c", "--config", default=None, help="Project config path (required unless the spec has a concrete one).")
 @click.option("--backend", type=click.Choice(["memory", "bash", "nextflow"]), default="memory")
-@click.option("-w", "--workers", type=int, default=1, help="Runs to execute concurrently (memory backend; >1 isolates a root per run).")
+@click.option(
+    "-w",
+    "--workers",
+    type=int,
+    default=1,
+    help="Runs to execute concurrently (memory backend; >1 isolates a root per run).",
+)
 @click.option("--profile", default="standard", help="Nextflow profile (standard|slurm).")
 @click.option("--resume", is_flag=True, default=False, help="Pass -resume to nextflow (crash-recovery only).")
 def run(graph: str, config: Optional[str], backend: str, workers: int, profile: str, resume: bool) -> None:

@@ -21,8 +21,20 @@ def _dep_ids(rp, node_id):
 def test_linear_chain_edges():
     spec = _spec(
         [
-            {"id": "a", "op": "logical.segop", "params": {"operation": "union"}, "in": {"i": ["m:dp/*"]}, "out": {"o": "m:t/a"}},
-            {"id": "b", "op": "logical.enclosed", "params": {"margin": 1}, "in": {"i1": "m:t/a", "i2": "c:u/s"}, "out": {"o": "m:t/b"}},
+            {
+                "id": "a",
+                "op": "logical.segop",
+                "params": {"operation": "union"},
+                "in": {"i": ["m:dp/*"]},
+                "out": {"o": "m:t/a"},
+            },
+            {
+                "id": "b",
+                "op": "logical.enclosed",
+                "params": {"margin": 1},
+                "in": {"i1": "m:t/a", "i2": "c:u/s"},
+                "out": {"o": "m:t/b"},
+            },
         ]
     )
     rp = plan(spec)
@@ -33,8 +45,20 @@ def test_linear_chain_edges():
 def test_sibling_independence():
     spec = _spec(
         [
-            {"id": "a", "op": "logical.segop", "params": {"operation": "difference"}, "in": {"i": ["x:u/s", "y:u/s"]}, "out": {"o": "x:t/a"}},
-            {"id": "b", "op": "logical.segop", "params": {"operation": "difference"}, "in": {"i": ["p:u/s", "q:u/s"]}, "out": {"o": "p:t/b"}},
+            {
+                "id": "a",
+                "op": "logical.segop",
+                "params": {"operation": "difference"},
+                "in": {"i": ["x:u/s", "y:u/s"]},
+                "out": {"o": "x:t/a"},
+            },
+            {
+                "id": "b",
+                "op": "logical.segop",
+                "params": {"operation": "difference"},
+                "in": {"i": ["p:u/s", "q:u/s"]},
+                "out": {"o": "p:t/b"},
+            },
         ]
     )
     rp = plan(spec)
@@ -45,9 +69,27 @@ def test_sibling_independence():
 def test_glob_fanin_depends_on_all_producers():
     spec = _spec(
         [
-            {"id": "a", "op": "logical.segop", "params": {"operation": "difference"}, "in": {"i": ["x:u/s", "y:u/s"]}, "out": {"o": "seg:filt/one"}},
-            {"id": "b", "op": "logical.segop", "params": {"operation": "difference"}, "in": {"i": ["x:u/s", "y:u/s"]}, "out": {"o": "seg:filt/two"}},
-            {"id": "c", "op": "logical.segop", "params": {"operation": "union"}, "in": {"i": ["seg:filt/*"]}, "out": {"o": "seg:comb/c"}},
+            {
+                "id": "a",
+                "op": "logical.segop",
+                "params": {"operation": "difference"},
+                "in": {"i": ["x:u/s", "y:u/s"]},
+                "out": {"o": "seg:filt/one"},
+            },
+            {
+                "id": "b",
+                "op": "logical.segop",
+                "params": {"operation": "difference"},
+                "in": {"i": ["x:u/s", "y:u/s"]},
+                "out": {"o": "seg:filt/two"},
+            },
+            {
+                "id": "c",
+                "op": "logical.segop",
+                "params": {"operation": "union"},
+                "in": {"i": ["seg:filt/*"]},
+                "out": {"o": "seg:comb/c"},
+            },
         ]
     )
     rp = plan(spec)
@@ -58,8 +100,20 @@ def test_same_uri_overwrite_requires_after():
     # two nodes writing the identical URI, consumer reads it, but no `after` -> ambiguous -> error
     nodes = [
         {"id": "w1", "op": "core.cp", "in": {"src": "x:u/s"}, "out": {"dst": "z:t/z"}},
-        {"id": "w2", "op": "logical.segop", "params": {"operation": "difference"}, "in": {"i": ["a:u/s", "b:u/s"]}, "out": {"o": "z:t/z"}},
-        {"id": "r", "op": "logical.segop", "params": {"operation": "difference"}, "in": {"i": ["z:t/z", "q:u/s"]}, "out": {"o": "out:t/r"}},
+        {
+            "id": "w2",
+            "op": "logical.segop",
+            "params": {"operation": "difference"},
+            "in": {"i": ["a:u/s", "b:u/s"]},
+            "out": {"o": "z:t/z"},
+        },
+        {
+            "id": "r",
+            "op": "logical.segop",
+            "params": {"operation": "difference"},
+            "in": {"i": ["z:t/z", "q:u/s"]},
+            "out": {"o": "out:t/r"},
+        },
     ]
     with pytest.raises(PlanError):
         plan(_spec(nodes))
@@ -68,8 +122,21 @@ def test_same_uri_overwrite_requires_after():
 def test_same_uri_overwrite_with_after_ok():
     nodes = [
         {"id": "w1", "op": "core.cp", "in": {"src": "x:u/s"}, "out": {"dst": "z:t/z"}},
-        {"id": "w2", "op": "logical.segop", "params": {"operation": "difference"}, "after": ["w1"], "in": {"i": ["a:u/s", "b:u/s"]}, "out": {"o": "z:t/z"}},
-        {"id": "r", "op": "logical.segop", "params": {"operation": "difference"}, "in": {"i": ["z:t/z", "q:u/s"]}, "out": {"o": "out:t/r"}},
+        {
+            "id": "w2",
+            "op": "logical.segop",
+            "params": {"operation": "difference"},
+            "after": ["w1"],
+            "in": {"i": ["a:u/s", "b:u/s"]},
+            "out": {"o": "z:t/z"},
+        },
+        {
+            "id": "r",
+            "op": "logical.segop",
+            "params": {"operation": "difference"},
+            "in": {"i": ["z:t/z", "q:u/s"]},
+            "out": {"o": "out:t/r"},
+        },
     ]
     rp = plan(_spec(nodes))
     assert _dep_ids(rp, "r") == {"w2"}  # consumer depends on the last writer

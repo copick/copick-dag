@@ -11,7 +11,7 @@ from __future__ import annotations
 import ast
 import csv
 import operator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 from copick_dag.ir.model import CoalesceSpec, FinalizeSpec, GraphNode, GraphSpec, SwitchSpec
@@ -45,7 +45,13 @@ class RNode:
 # safe arithmetic for `=` param expressions
 # ---------------------------------------------------------------------------
 
-_BIN = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.Pow: operator.pow}
+_BIN = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+}
 _UNARY = {ast.USub: operator.neg, ast.UAdd: operator.pos}
 
 
@@ -151,17 +157,40 @@ def _finalize_nodes(fin: FinalizeSpec) -> Tuple[List[GraphNode], set]:
     out: List[GraphNode] = []
     gc_ids: set = set()
     for i, c in enumerate(fin.copies):
-        out.append(GraphNode(id=f"finalize_cp_{i}", op=_core_op("cp", c.object_type), inputs={"src": c.src},
-                             out={"dst": c.dst}, optional=c.optional, params={"overwrite": c.overwrite}))
+        out.append(
+            GraphNode(
+                id=f"finalize_cp_{i}",
+                op=_core_op("cp", c.object_type),
+                inputs={"src": c.src},
+                out={"dst": c.dst},
+                optional=c.optional,
+                params={"overwrite": c.overwrite},
+            )
+        )
     for i, m in enumerate(fin.moves):
-        out.append(GraphNode(id=f"finalize_mv_{i}", op=_core_op("mv", m.object_type), inputs={"src": m.src},
-                             out={"dst": m.dst}, optional=m.optional, params={"overwrite": m.overwrite}))
+        out.append(
+            GraphNode(
+                id=f"finalize_mv_{i}",
+                op=_core_op("mv", m.object_type),
+                inputs={"src": m.src},
+                out={"dst": m.dst},
+                optional=m.optional,
+                params={"overwrite": m.overwrite},
+            )
+        )
     if fin.gc:
         for i, pat in enumerate(fin.gc.remove):
             nid = f"gc_rm_{i}"
             gc_ids.add(nid)
-            out.append(GraphNode(id=nid, op=_core_op("rm", fin.gc.object_type), inputs={"i": pat},
-                                 optional=True, params={"force": True}))
+            out.append(
+                GraphNode(
+                    id=nid,
+                    op=_core_op("rm", fin.gc.object_type),
+                    inputs={"i": pat},
+                    optional=True,
+                    params={"force": True},
+                )
+            )
     return out, gc_ids
 
 
@@ -169,7 +198,9 @@ def _base_id(node: GraphNode, i: int) -> str:
     return node.id or f"{node.op.split('.')[-1]}_{i}"
 
 
-def _row_context(row: Optional[Dict[str, Any]], ri: int) -> Tuple[Dict[str, Any], str, Optional[float], Optional[List[str]]]:
+def _row_context(
+    row: Optional[Dict[str, Any]], ri: int
+) -> Tuple[Dict[str, Any], str, Optional[float], Optional[List[str]]]:
     if row is None:
         return {}, "", None, None
     row_tag = str(row.get("tag", f"row{ri}"))
@@ -179,9 +210,17 @@ def _row_context(row: Optional[Dict[str, Any]], ri: int) -> Tuple[Dict[str, Any]
     return bindings, row_tag, row_vs, row_runs
 
 
-def _expand_one(node: GraphNode, base_id: str, bindings: Dict[str, Any], row_tag: str,
-                row_vs: Optional[float], row_runs: Optional[List[str]], is_gc: bool,
-                id_suffix: str = "", default_optional: bool = False) -> RNode:
+def _expand_one(
+    node: GraphNode,
+    base_id: str,
+    bindings: Dict[str, Any],
+    row_tag: str,
+    row_vs: Optional[float],
+    row_runs: Optional[List[str]],
+    is_gc: bool,
+    id_suffix: str = "",
+    default_optional: bool = False,
+) -> RNode:
     nid = base_id + id_suffix + (f"__{row_tag}" if row_tag else "")
 
     inputs: Dict[str, Any] = {}
@@ -205,9 +244,21 @@ def _expand_one(node: GraphNode, base_id: str, bindings: Dict[str, Any], row_tag
     needs = {k: v + (f"__{row_tag}" if row_tag else "") for k, v in node.needs.items()}
     optional = default_optional if node.optional is None else bool(node.optional)
 
-    return RNode(id=nid, op=node.op, params=params, inputs=inputs, out=out, optional=optional,
-                 after=after, needs=needs, scope=node.scope, row_tag=row_tag, runs=row_runs,
-                 vs=row_vs, is_gc=is_gc)
+    return RNode(
+        id=nid,
+        op=node.op,
+        params=params,
+        inputs=inputs,
+        out=out,
+        optional=optional,
+        after=after,
+        needs=needs,
+        scope=node.scope,
+        row_tag=row_tag,
+        runs=row_runs,
+        vs=row_vs,
+        is_gc=is_gc,
+    )
 
 
 def expand(spec: GraphSpec) -> List[RNode]:
@@ -235,8 +286,19 @@ def expand(spec: GraphSpec) -> List[RNode]:
                     for crow in _read_csv_rows(csv_path, node.expand.bind, node.expand.normalize):
                         b = {**ob, **crow}
                         key = str(crow[_primary_var(node.expand.bind)])
-                        rnodes.append(_expand_one(node, bid, b, row_tag, row_vs, row_runs, is_gc,
-                                                  id_suffix=osuffix + f"__{key}", default_optional=True))
+                        rnodes.append(
+                            _expand_one(
+                                node,
+                                bid,
+                                b,
+                                row_tag,
+                                row_vs,
+                                row_runs,
+                                is_gc,
+                                id_suffix=osuffix + f"__{key}",
+                                default_optional=True,
+                            )
+                        )
                 else:
                     rnodes.append(_expand_one(node, bid, ob, row_tag, row_vs, row_runs, is_gc, id_suffix=osuffix))
 
@@ -275,8 +337,22 @@ def _lower_coalesce(rnodes: List[RNode]) -> List[RNode]:
             after = list(r.after)
             if prev_id is not None:
                 after = after + [prev_id]
-            out.append(RNode(id=wid, op=r.op, params=dict(r.params), inputs=new_inputs, out=dict(r.out),
-                             optional=(k != 0) or r.optional, after=after, needs=dict(r.needs),
-                             scope=r.scope, row_tag=r.row_tag, runs=r.runs, vs=r.vs, is_gc=r.is_gc))
+            out.append(
+                RNode(
+                    id=wid,
+                    op=r.op,
+                    params=dict(r.params),
+                    inputs=new_inputs,
+                    out=dict(r.out),
+                    optional=(k != 0) or r.optional,
+                    after=after,
+                    needs=dict(r.needs),
+                    scope=r.scope,
+                    row_tag=r.row_tag,
+                    runs=r.runs,
+                    vs=r.vs,
+                    is_gc=r.is_gc,
+                )
+            )
             prev_id = wid
     return out

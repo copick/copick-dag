@@ -160,9 +160,7 @@ def _build_task(r: RNode, run: Optional[str], axis_vs: Optional[float]) -> Concr
     if run is not None:
         subst["run"] = run
     params = {
-        k: (substitute(v, subst) if isinstance(v, str) else v)
-        for k, v in r.params.items()
-        if k != "voxel_spacing"
+        k: (substitute(v, subst) if isinstance(v, str) else v) for k, v in r.params.items() if k != "voxel_spacing"
     }
 
     scope = r.scope or op.scope or SCOPE_PER_RUN
@@ -194,9 +192,7 @@ def _build_barrier_task(r: RNode, run_scope: List[str], vs: Optional[float]) -> 
             inputs[slot] = _canon_uri(val, vs, None, otype)
     subst: Dict[str, object] = {"vs": vs} if vs is not None else {}
     params = {
-        k: (substitute(v, subst) if isinstance(v, str) else v)
-        for k, v in r.params.items()
-        if k != "voxel_spacing"
+        k: (substitute(v, subst) if isinstance(v, str) else v) for k, v in r.params.items() if k != "voxel_spacing"
     }
     return ConcreteTask(
         task_id=f"{r.id}::BARRIER::{_vs_tag(vs)}",
@@ -304,7 +300,9 @@ def _last_writer(writers: List[ConcreteTask], rnode_index: Dict[str, int]) -> Co
     return max(writers, key=lambda t: rnode_index.get(t.node_id, -1))
 
 
-def _check_overwrite_order(writers: List[ConcreteTask], last: ConcreteTask, rnode_by_id: Dict[str, RNode], uri: str) -> None:
+def _check_overwrite_order(
+    writers: List[ConcreteTask], last: ConcreteTask, rnode_by_id: Dict[str, RNode], uri: str
+) -> None:
     if len(writers) <= 1:
         return
     last_node = rnode_by_id[last.node_id]
@@ -317,7 +315,9 @@ def _check_overwrite_order(writers: List[ConcreteTask], last: ConcreteTask, rnod
         )
 
 
-def _check_preconditions(tasks: List[ConcreteTask], external: List[str], project: ProjectView, warnings: List[str]) -> None:
+def _check_preconditions(
+    tasks: List[ConcreteTask], external: List[str], project: ProjectView, warnings: List[str]
+) -> None:
     ext = set(external)
     for t in tasks:
         if t.run is None or t.optional:

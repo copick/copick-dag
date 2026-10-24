@@ -1,0 +1,118 @@
+name: Create Release PRs
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: Branch to release
+        required: true
+        default: main
+        type: choice
+        options:
+          - main
+          - v2.0
+  push:
+    branches:
+      - main
+      - v2.0
+
+env:
+  RELEASE_TARGET_BRANCH: ${{ github.event_name == 'workflow_dispatch' && inputs.target_branch || github.ref_name }}
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    # Creating v2.0 from main emits a push event. Wait for the first real commit
+    # so the initial alpha can be bootstrapped deliberately with Release-As.
+    if: github.event_name == 'workflow_dispatch' || github.event.created == false
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.target_branch || github.ref_name }}
+      cancel-in-progress: true
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release Please
+        uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          manifest-file: ".release-please.manifest.json"
+          config-file: ${{ env.RELEASE_TARGET_BRANCH == 'v2.0' && 'release-please.prerelease.config.json' || 'release-please.config.json' }}
+          target-branch: ${{ env.RELEASE_TARGET_BRANCH }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+    outputs:
+      paths_released: ${{ steps.release.outputs.paths_released }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      sha: ${{ steps.release.outputs.sha }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+
+  validate-release:
+    name: Validate released commit
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/test.yml
+    with:
+      ref: ${{ needs.release-please.outputs.sha }}
+
+  build-release:
+    name: Build and inspect release artifacts
+    runs-on: ubuntu-latest
+    needs: [release-please, validate-release]
+    if: needs.release-please.outputs.release_created == 'true'
+    steps:
+      - name: Checkout released commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        with:
+          version: "0.12.4"
+          python-version: "3.12"
+
+      - name: Check lockfile
+        run: uv lock --check
+
+      - name: Install inspection environment
+        run: uv sync --locked --extra test
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Inspect distributions
+        run: uv run --no-sync python scripts/inspect_distribution.py dist
+
+      - name: Smoke-test lean wheel installation
+        run: |
+          WHEEL_PATH="$(find "$PWD/dist" -name '*.whl' -print -quit)"
+          uv venv /tmp/copick-dag-release-lean --python 3.12 --clear
+          uv pip install --python /tmp/copick-dag-release-lean/bin/python "$WHEEL_PATH"
+          /tmp/copick-dag-release-lean/bin/python -c "import importlib.metadata as m, copick_dag; assert m.version('copick') == '2.0.0a1'; assert m.version('copick-utils') == '2.0.0a1'; assert not any(d.metadata['Name'] == 'copick-torch' for d in m.distributions()); print(copick_dag.__version__)"
+          /tmp/copick-dag-release-lean/bin/copick-dag --help
+
+      - name: Smoke-test full plugin wheel installation
+        run: |
+          WHEEL_PATH="$(find "$PWD/dist" -name '*.whl' -print -quit)"
+          uv venv /tmp/copick-dag-release-full --python 3.12 --clear
+          uv pip install --python /tmp/copick-dag-release-full/bin/python "copick-dag[torch] @ file://${WHEEL_PATH}"
+          /tmp/copick-dag-release-full/bin/python -c "import importlib.metadata as m; assert m.version('copick') == '2.0.0a1'; assert m.version('copick-utils') == '2.0.0a1'; assert m.version('copick-torch') == '2.0.0a1'; from copick_dag.registry import get_op; from copick_dag.registry.introspect import operation_available; assert all(operation_available(get_op(op)) for op in ('convert.seg2slab', 'convert.picks2slab', 'process.downsample', 'process.bandpass'))"
+
+      - name: Preserve validated artifacts without publishing
+        uses: actions/upload-artifact@v7
+        with:
+          name: copick-dag-${{ needs.release-please.outputs.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # PyPI publication is intentionally disabled. Release Please may create a
+  # GitHub release, but this workflow stops after validating and retaining the
+  # artifacts. Adding a publisher requires a separate, explicit repository
+  # change and review.
