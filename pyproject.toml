@@ -7,7 +7,7 @@ name = "copick-dag"
 description = "Abstract DAG-pipeline IR for copick, materializable to bash / in-memory / out-of-core backends."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 keywords = ["copick", "cryoet", "cryo-et", "tomography", "pipeline", "dag", "workflow"]
 authors = [{ name = "Utz Ermel", email = "utz.ermel@czii.org" }]
 classifiers = [
