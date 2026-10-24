@@ -13,7 +13,7 @@ See ``copick_dag.ir`` (the IR), ``copick_dag.registry`` (the operation registry)
 ``copick_dag.planner`` (abstract -> concrete), and ``copick_dag.backends`` (emitters).
 """
 
-__version__ = "0.1.0"
+__version__ = "2.0.0-alpha.1"
 
 from copick_dag.ir.model import GraphSpec, GraphNode  # noqa: E402
 from copick_dag.plan.concrete import ConcreteTask, ResolvedPlan  # noqa: E402
