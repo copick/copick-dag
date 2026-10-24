@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.0.0-alpha.2](https://github.com/copick/copick-dag/compare/copick-dag-v2.0.0-alpha.1...copick-dag-v2.0.0-alpha.2) (2026-10-24)
+
+
+### 🐞 Bug Fixes
+
+* bump dependencies ([#29](https://github.com/copick/copick-dag/issues/29)) ([2d9791c](https://github.com/copick/copick-dag/commit/2d9791cc64a6b79d2b1e3cbd82ffa5e14e89d4bd))
+
+
+### 🧹 Miscellaneous Chores
+
+* add the MIT license file ([#33](https://github.com/copick/copick-dag/issues/33)) ([2f22754](https://github.com/copick/copick-dag/commit/2f22754ba3a969e6f838443823a340266138bea2))
+
+
+### ⚙ Continuous Integration
+
+* drop the post-release re-validation and smoke tests ([#27](https://github.com/copick/copick-dag/issues/27)) ([8bd68c1](https://github.com/copick/copick-dag/commit/8bd68c17f3bb44a711e96f4302976bd620222d98))
+
 ## [2.0.0-alpha.1](https://github.com/copick/copick-dag/compare/copick-dag-v0.1.0...copick-dag-v2.0.0-alpha.1) (2026-10-24)
 
 
