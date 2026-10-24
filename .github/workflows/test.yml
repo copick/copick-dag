@@ -34,7 +34,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.12.4"
           python-version: ${{ matrix.python-version }}
@@ -45,15 +45,15 @@ jobs:
       - name: Install lean test environment
         run: uv sync --locked --extra test --extra dev
 
-      - name: Verify Python and ecosystem alpha versions
+      - name: Verify Python and copick 2.x ecosystem versions
         run: >
           uv run --no-sync python -c
           "import importlib.metadata as m, sys;
           expected = tuple(map(int, '${{ matrix.python-version }}'.split('.')));
           assert sys.version_info[:2] == expected, sys.version;
           assert sys.version_info.releaselevel == 'final', sys.version;
-          assert m.version('copick') == '2.0.0a1';
-          assert m.version('copick-utils') == '2.0.0a1';
+          assert m.version('copick').startswith('2.');
+          assert m.version('copick-utils').startswith('2.');
           assert not any(d.metadata['Name'] == 'copick-torch' for d in m.distributions());
           print(sys.version)"
 
@@ -73,7 +73,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.12.4"
           python-version: "3.12"
@@ -84,13 +84,13 @@ jobs:
       - name: Install full plugin test environment
         run: uv sync --locked --extra test --extra torch
 
-      - name: Verify exact plugin alpha
+      - name: Verify copick 2.x plugin versions
         run: >
           uv run --no-sync python -c
           "import importlib.metadata as m;
-          assert m.version('copick') == '2.0.0a1';
-          assert m.version('copick-utils') == '2.0.0a1';
-          assert m.version('copick-torch') == '2.0.0a1'"
+          assert m.version('copick').startswith('2.');
+          assert m.version('copick-utils').startswith('2.');
+          assert m.version('copick-torch').startswith('2.')"
 
       - name: Run torch plugin contract tests
         run: uv run --no-sync pytest -q -p no:warnings -m torch_plugin tests
@@ -107,7 +107,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@ae62891fec2bb8e7d6c99fc78c9fec3a63790f8d # v10.0.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.12.4"
           python-version: "3.12"
