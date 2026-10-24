@@ -77,7 +77,8 @@ produces an installation hint; ordinary planning and execution remain torch-free
 The 2.0 line consumes the OME-Zarr 0.5 / Zarr v3 contracts provided by `copick>=2.0.0-alpha.1` and
 `copick-utils>=2.0.0-alpha.1`. It can process supported legacy OME-Zarr 0.4 / Zarr v2 projects and supported
 noncanonical Zarr v3 layouts. New numerical outputs are written by upstream copick APIs in their canonical
-OME-Zarr 0.5 / Zarr v3 representation; copick-dag does not implement its own Zarr reader or writer.
+OME-Zarr 0.5 / Zarr v3 representation; copick-dag does not implement its own Zarr reader or writer. The 1.x line
+(branch `main`, `pip install copick-dag`) stays on OME-Zarr 0.4 / Zarr v2 and is otherwise the same.
 
 `cp` and `mv` guarantee decoded entity equivalence, identity metadata, and the requested overwrite behavior. The
 bash and Nextflow backends may preserve a source store byte-for-byte, while the memory backend may decode and
