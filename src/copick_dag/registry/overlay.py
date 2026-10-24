@@ -778,7 +778,10 @@ _register(
 for _ot in ("mesh", "picks"):
     _register(
         OpSpec(
-            op_id=f"core.cp-{_ot}", cli_path=("cp",), vs_style=VS_NONE, kind="cp",
+            op_id=f"core.cp-{_ot}",
+            cli_path=("cp",),
+            vs_style=VS_NONE,
+            kind="cp",
             object_type_positional=_ot,
             inputs=[SlotSpec("src", object_type=_ot, role="input", positional=True, order=1)],
             outputs=[SlotSpec("dst", object_type=_ot, role="output", positional=True, order=2)],
@@ -788,7 +791,10 @@ for _ot in ("mesh", "picks"):
     )
     _register(
         OpSpec(
-            op_id=f"core.mv-{_ot}", cli_path=("mv",), vs_style=VS_NONE, kind="mv",
+            op_id=f"core.mv-{_ot}",
+            cli_path=("mv",),
+            vs_style=VS_NONE,
+            kind="mv",
             object_type_positional=_ot,
             inputs=[SlotSpec("src", object_type=_ot, role="input", positional=True, order=1)],
             outputs=[SlotSpec("dst", object_type=_ot, role="output", positional=True, order=2)],
@@ -800,7 +806,10 @@ for _ot in ("mesh", "picks"):
 for _ot, _vs in (("mesh", VS_NONE), ("picks", VS_NONE), ("tomogram", VS_URI), ("feature", VS_URI)):
     _register(
         OpSpec(
-            op_id=f"core.rm-{_ot}", cli_path=("rm",), vs_style=_vs, kind="rm",
+            op_id=f"core.rm-{_ot}",
+            cli_path=("rm",),
+            vs_style=_vs,
+            kind="rm",
             object_type_positional=_ot,
             inputs=[SlotSpec("i", object_type=_ot, role="input", positional=True, order=1)],
             outputs=[],

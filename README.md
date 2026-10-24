@@ -8,7 +8,7 @@ Today, copick pipelines are shell scripts that call the `copick` CLI. That is re
 - each command runs across the **whole** run set before the next starts (no parallelism *along*
   the pipeline, only *within* a command);
 - nothing persists in memory between commands — every step re-parses the project and re-reads
-  zarr;
+  Zarr;
 - the dependency structure (a DAG) is implicit in the input/output URIs and never made explicit.
 
 `copick-dag` makes that DAG explicit and backend-agnostic:
@@ -21,7 +21,7 @@ ResolvedPlan  (concrete DAG: one task per (node, run, voxel-spacing))
    │
    ├── bash      →  a `copick …` CLI script (same behaviour as today)
    ├── memory    →  in-process, write-through memory overlay, parallel across runs + along graph
-   └── nextflow  →  (roadmap) per-run process parallelism for HPC
+   └── nextflow  →  per-run process parallelism for local and SLURM execution
 ```
 
 ## Status
@@ -53,10 +53,44 @@ Note: the in-memory backend defaults to sequential-per-run (`workers=1`) because
   existing operation functions via a write-through overlay, so array algorithms are not
   reimplemented.
 
-## Install (development)
+## Installation
+
+copick-dag 1.x requires Python 3.10 or newer and the copick 1.x ecosystem. The lean installation includes core and
+copick-utils operations without installing PyTorch:
 
 ```bash
-pip install -e .
+pip install copick-dag
 ```
 
-Requires an environment that already has `copick` and `copick-utils` installed.
+Four registered operations are supplied by copick-torch: `convert.seg2slab`, `convert.picks2slab`,
+`process.downsample`, and `process.bandpass`. Install the explicit extra when those operations are needed
+(copick-torch requires Python 3.11 or newer):
+
+```bash
+pip install "copick-dag[torch]"
+```
+
+Operation descriptions report whether their providing command is available. Selecting a missing optional operation
+produces an installation hint; ordinary planning and execution remain torch-free.
+
+## OME-Zarr and copy/move behavior
+
+The 1.x line consumes the OME-Zarr 0.4 / Zarr v2 contracts provided by copick and copick-utils 1.x. New numerical
+outputs are written by upstream copick APIs in their OME-Zarr 0.4 / Zarr v2 representation; copick-dag does not
+implement its own Zarr reader or writer. The 2.0 line (branch `v2.0`, `pip install --pre copick-dag`) moves to
+OME-Zarr 0.5 / Zarr v3 and is otherwise the same.
+
+`cp` and `mv` guarantee decoded entity equivalence, identity metadata, and the requested overwrite behavior. The
+bash and Nextflow backends may preserve a source store byte-for-byte, while the memory backend may decode and
+rewrite it using the current canonical encoding. Raw keys, chunk/shard layout, codecs, and source format are not
+part of the cross-backend copy contract.
+
+Nextflow `-resume` is intended for crash recovery. Changes made directly to an external copick store do not alter
+Nextflow's task hashes, so a fresh run is required after such changes.
+
+## Development
+
+```bash
+uv sync --locked --extra test --extra dev
+uv run pytest -m "not torch_plugin"
+```

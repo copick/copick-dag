@@ -128,20 +128,31 @@ def make_m3a_fixture(base_dir: str) -> str:
     os.makedirs(overlay_root, exist_ok=True)
     config_path = os.path.join(base_dir, "config.json")
 
-    pickable = [PickableObject(name=n, is_particle=p, label=l) for n, (p, l) in M3A_OBJECTS.items()]
+    pickable = [
+        PickableObject(name=name, is_particle=is_particle, label=label)
+        for name, (is_particle, label) in M3A_OBJECTS.items()
+    ]
     # bare absolute path: new_config adds a single ``local://`` (see make_fixture note above).
-    root = copick.new_config(config=config_path, overlay_root=overlay_root,
-                             proj_name="copick-dag m3a test", pickable_objects=pickable)
+    root = copick.new_config(
+        config=config_path, overlay_root=overlay_root, proj_name="copick-dag m3a test", pickable_objects=pickable
+    )
 
     sample = np.zeros(SHAPE, dtype=np.uint8)
     sample[2:22, 2:22, 2:22] = 1
     for run_name in M3A_RUNS:
         run = root.new_run(run_name, exist_ok=True)
-        ml = run.new_segmentation(voxel_size=M3A_VS, name="multilabel", session_id="final",
-                                  is_multilabel=True, user_id="pipeline", exist_ok=True)
+        ml = run.new_segmentation(
+            voxel_size=M3A_VS,
+            name="multilabel",
+            session_id="final",
+            is_multilabel=True,
+            user_id="pipeline",
+            exist_ok=True,
+        )
         ml.from_numpy(_multilabel(with_mt=(run_name == "run_mt")))
-        sm = run.new_segmentation(voxel_size=M3A_VS, name="sample", session_id="0",
-                                  is_multilabel=False, user_id="rescale", exist_ok=True)
+        sm = run.new_segmentation(
+            voxel_size=M3A_VS, name="sample", session_id="0", is_multilabel=False, user_id="rescale", exist_ok=True
+        )
         sm.from_numpy(sample)
     return config_path
 
@@ -152,7 +163,9 @@ def make_m3a_csv(path: str) -> str:
     return path
 
 
-def read_segmentations(config_path: str, runs: List[str], user_id: str, session: str, vs: float) -> Dict[str, np.ndarray]:
+def read_segmentations(
+    config_path: str, runs: List[str], user_id: str, session: str, vs: float
+) -> Dict[str, np.ndarray]:
     """Read every ``*:<user_id>/<session>@vs`` segmentation, keyed ``run|name``."""
     import copick
 
@@ -222,7 +235,9 @@ def read_picks(config_path: str, runs: List[str], user_id: str, session: str) ->
     return out
 
 
-def read_final_segmentations(config_path: str, runs: List[str], session: str = "final-training") -> Dict[str, np.ndarray]:
+def read_final_segmentations(
+    config_path: str, runs: List[str], session: str = "final-training"
+) -> Dict[str, np.ndarray]:
     """Read every ``*:napari/<session>@20`` segmentation into a dict keyed ``run|name``."""
     import copick
 

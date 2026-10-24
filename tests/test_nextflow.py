@@ -91,8 +91,8 @@ def test_one_process_per_node_not_per_task(tmp_path):
     procs = re.findall(r"^process (\S+) \{", nf, re.M)
     units = _build_units(rp)
     assert len(procs) == len(units)
-    assert len(procs) == len(set(procs))         # unique
-    assert len(rp.tasks) > len(units)            # fewer processes than task instances
+    assert len(procs) == len(set(procs))  # unique
+    assert len(rp.tasks) > len(units)  # fewer processes than task instances
     for p in procs:
         assert re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", p), p
 
@@ -136,7 +136,10 @@ def test_render_subworkflow_unique_prefix_across_dags(tmp_path):
     rp = _plan(tmp_path)
     a = render_subworkflow(rp, "COPICK_DAG_A", label="copick_cpu")
     b = render_subworkflow(rp, "COPICK_DAG_B", label="copick_cpu")
-    procs = lambda s: {ln.split()[1] for ln in s.splitlines() if ln.startswith("process ")}
+
+    def procs(s):
+        return {ln.split()[1] for ln in s.splitlines() if ln.startswith("process ")}
+
     assert procs(a).isdisjoint(procs(b))
     assert "workflow COPICK_DAG_A {" in a and "workflow COPICK_DAG_B {" in b
 
@@ -151,11 +154,11 @@ def test_dependency_wiring_channels(tmp_path):
         if u.scope == SCOPE_BARRIER:
             assert ".collect()" in wl
         elif not u.dep_keys:
-            assert "Channel.fromList(runsList)" in wl        # standalone root fans the runs
+            assert "Channel.fromList(runsList)" in wl  # standalone root fans the runs
         elif len(u.dep_keys) == 1:
             assert f"(c_{names[u.dep_keys[0]]})" in wl
         else:
-            assert ".join(" in wl                            # multi-input: per-run join
+            assert ".join(" in wl  # multi-input: per-run join
             for dk in u.dep_keys:
                 assert f"c_{names[dk]}" in wl
 
@@ -268,8 +271,9 @@ def test_nextflow_local_equivalence(tmp_path):
     cfg_mem = make_m3a_fixture(str(tmp_path / "mem"))
     cfg_nf = make_m3a_fixture(str(tmp_path / "nf"))
 
-    proc = subprocess.run(["bash", "-c", render_bash(_plan_with_project(cfg_bash, csv))],
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", "-c", render_bash(_plan_with_project(cfg_bash, csv))], capture_output=True, text=True
+    )
     assert proc.returncode == 0, proc.stderr[-2000:]
 
     stats = run_memory(_plan_with_project(cfg_mem, csv), workers=1)
@@ -281,7 +285,7 @@ def test_nextflow_local_equivalence(tmp_path):
     assert r.returncode == 0, r.stdout[-2000:] + "\n" + r.stderr[-3000:]
 
     _assert_finals_equal(cfg_bash, cfg_nf)  # nextflow == bash
-    _assert_finals_equal(cfg_mem, cfg_nf)   # nextflow == memory (three-way)
+    _assert_finals_equal(cfg_mem, cfg_nf)  # nextflow == memory (three-way)
 
 
 @pytest.mark.slow
@@ -299,8 +303,9 @@ def test_nextflow_serial_equals_parallel(tmp_path):
     cfg_bash = make_m3a_fixture(str(tmp_path / "bash"))
     cfg_nf = make_m3a_fixture(str(tmp_path / "nf"))
 
-    proc = subprocess.run(["bash", "-c", render_bash(_plan_with_project(cfg_bash, csv))],
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", "-c", render_bash(_plan_with_project(cfg_bash, csv))], capture_output=True, text=True
+    )
     assert proc.returncode == 0, proc.stderr[-2000:]
 
     nfdir = str(tmp_path / "nfwork")
@@ -379,8 +384,9 @@ def test_nextflow_slurm_profile():
     cfg_bash = make_m3a_fixture(os.path.join(base, "bash"))
     cfg_nf = make_m3a_fixture(os.path.join(base, "nf"))
 
-    proc = subprocess.run(["bash", "-c", render_bash(_plan_with_project(cfg_bash, csv))],
-                          capture_output=True, text=True)
+    proc = subprocess.run(
+        ["bash", "-c", render_bash(_plan_with_project(cfg_bash, csv))], capture_output=True, text=True
+    )
     assert proc.returncode == 0, proc.stderr[-2000:]
 
     nfdir = os.path.join(base, "nfwork")
@@ -407,10 +413,20 @@ def test_nextflow_crosstype_roundtrip(tmp_path):
         "project": {"config": cfg},
         "defaults": {"voxel_spacing": 20.0},
         "nodes": [
-            {"id": "to_mesh", "op": "convert.seg2mesh", "params": {"level": 0.5, "step_size": 1},
-             "in": {"i": "cell:napari/manual-scaled"}, "out": {"o": "cell:seg2mesh/surf"}},
-            {"id": "to_seg", "op": "convert.mesh2seg", "params": {"tomo_type": "wbp"},
-             "in": {"i": "cell:seg2mesh/surf"}, "out": {"o": "cell:mesh2seg/vol@20.0"}},
+            {
+                "id": "to_mesh",
+                "op": "convert.seg2mesh",
+                "params": {"level": 0.5, "step_size": 1},
+                "in": {"i": "cell:napari/manual-scaled"},
+                "out": {"o": "cell:seg2mesh/surf"},
+            },
+            {
+                "id": "to_seg",
+                "op": "convert.mesh2seg",
+                "params": {"tomo_type": "wbp"},
+                "in": {"i": "cell:seg2mesh/surf"},
+                "out": {"o": "cell:mesh2seg/vol@20.0"},
+            },
         ],
     }
     rp = plan(GraphSpec.from_dict(graph), ProjectView.open(cfg))
